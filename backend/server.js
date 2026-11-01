@@ -49,6 +49,39 @@ app.post('/api/institute-applications',asyncRoute(async(req,res)=>{
  res.status(201).json({message:'Application submitted. CIE will review it before account activation.'});
 }));
 app.get('/api/institute-admin/overview',auth('institute_admin'),asyncRoute(async(req,res)=>{const r=await pool.query("SELECT id,institute_code,institute_name,status FROM institutes WHERE id=$1",[req.user.instituteId]);if(!r.rowCount||r.rows[0].status!=='approved')return res.status(403).json({message:'Institute is not approved'});res.json(r.rows[0]);}));
+
+app.get('/api/institute-admin/dashboard',auth('institute_admin'),asyncRoute(async(req,res)=>{
+ const id=req.user.instituteId;
+ const [students,courses,exams,activeStudents,recent]=await Promise.all([
+ pool.query('SELECT COUNT(*)::int total FROM students WHERE institute_id=$1',[id]),
+ pool.query('SELECT COUNT(*)::int total FROM courses WHERE institute_id=$1',[id]),
+ pool.query('SELECT COUNT(*)::int total FROM exams WHERE institute_id=$1',[id]),
+ pool.query("SELECT COUNT(*)::int total FROM students WHERE institute_id=$1 AND status='active'",[id]),
+ pool.query('SELECT id,admission_number,full_name,mobile,class_or_course,status,created_at FROM students WHERE institute_id=$1 ORDER BY created_at DESC LIMIT 8',[id])
+ ]);
+ res.json({students:students.rows[0].total,activeStudents:activeStudents.rows[0].total,courses:courses.rows[0].total,exams:exams.rows[0].total,recentStudents:recent.rows});
+}));
+app.get('/api/institute-admin/students',auth('institute_admin'),asyncRoute(async(req,res)=>{
+ const q=clean(req.query.q).slice(0,100),id=req.user.instituteId;
+ const r=await pool.query("SELECT id,admission_number,full_name,father_name,email,mobile,date_of_birth,gender,class_or_course,status,created_at FROM students WHERE institute_id=$1 AND ($2='' OR full_name ILIKE '%'||$2||'%' OR admission_number ILIKE '%'||$2||'%' OR mobile ILIKE '%'||$2||'%') ORDER BY created_at DESC LIMIT 250",[id,q]);
+ res.json(r.rows);
+}));
+app.post('/api/institute-admin/students',auth('institute_admin'),asyncRoute(async(req,res)=>{
+ const b=req.body||{},name=clean(b.fullName),mobile=clean(b.mobile),admission=clean(b.admissionNumber),password=String(b.password||'');
+ if(!name||!mobile||password.length<8)return res.status(400).json({message:'Student name, mobile and password (minimum 8 characters) are required.'});
+ const hash=await bcrypt.hash(password,12);
+ try{
+ const r=await pool.query("INSERT INTO students(institute_id,admission_number,full_name,father_name,email,mobile,password_hash,date_of_birth,gender,class_or_course,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'active') RETURNING id,admission_number,full_name,mobile,class_or_course,status,created_at",[req.user.instituteId,admission||null,name,clean(b.fatherName)||null,clean(b.email).toLowerCase()||null,mobile,hash,b.dateOfBirth||null,clean(b.gender)||null,clean(b.classOrCourse)||null]);
+ res.status(201).json({message:'Student added successfully.',student:r.rows[0]});
+ }catch(e){if(e.code==='23505')return res.status(409).json({message:'This admission number or student detail already exists.'});throw e;}
+}));
+app.patch('/api/institute-admin/students/:id/status',auth('institute_admin'),asyncRoute(async(req,res)=>{
+ const id=Number(req.params.id),status=clean(req.body.status);
+ if(!Number.isSafeInteger(id)||id<1||!['active','inactive'].includes(status))return res.status(400).json({message:'Invalid student or status.'});
+ const r=await pool.query('UPDATE students SET status=$1,updated_at=NOW() WHERE id=$2 AND institute_id=$3 RETURNING id,status',[status,id,req.user.instituteId]);
+ if(!r.rowCount)return res.status(404).json({message:'Student not found.'});
+ res.json({message:'Student status updated.',student:r.rows[0]});
+}));
 app.get('/api/super-admin/overview',auth('super_admin'),asyncRoute(async(_req,res)=>{
  const [institutes,apps,admins,students,exams]=await Promise.all([
  pool.query("SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status='approved')::int approved,COUNT(*) FILTER(WHERE status='pending')::int pending FROM institutes"),

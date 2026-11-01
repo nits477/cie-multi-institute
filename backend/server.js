@@ -48,6 +48,7 @@ app.post('/api/institute-applications',asyncRoute(async(req,res)=>{
  await pool.query('INSERT INTO institute_admin_applications(institute_name,applicant_name,email,phone,password_hash,address,state,district,message) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[name,applicant,email,phone,hash,clean(b.address),clean(b.state),clean(b.district),clean(b.message)]);
  res.status(201).json({message:'Application submitted. CIE will review it before account activation.'});
 }));
+app.get('/api/institute-admin/overview',auth('institute_admin'),asyncRoute(async(req,res)=>{const r=await pool.query("SELECT id,institute_code,institute_name,status FROM institutes WHERE id=$1",[req.user.instituteId]);if(!r.rowCount||r.rows[0].status!=='approved')return res.status(403).json({message:'Institute is not approved'});res.json(r.rows[0]);}));
 app.get('/api/super-admin/overview',auth('super_admin'),asyncRoute(async(_req,res)=>{
  const [institutes,apps,admins,students,exams]=await Promise.all([
  pool.query("SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status='approved')::int approved,COUNT(*) FILTER(WHERE status='pending')::int pending FROM institutes"),

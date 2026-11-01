@@ -42,7 +42,7 @@ app.post('/api/auth/login',asyncRoute(async(req,res)=>{
 app.post('/api/institute-applications',asyncRoute(async(req,res)=>{
  const b=req.body||{};const name=clean(b.instituteName),applicant=clean(b.applicantName),email=clean(b.email).toLowerCase(),phone=clean(b.phone),password=String(b.password||'');
  if(!name||!applicant||!/^\S+@\S+\.\S+$/.test(email)||!phone||password.length<8) return res.status(400).json({message:'Please complete all required fields. Password must be at least 8 characters.'});
- const exists=await pool.query('SELECT 1 FROM institute_admin_applications WHERE LOWER(email)=LOWER($1) AND status='pending'',[email]);
+ const exists=await pool.query("SELECT 1 FROM institute_admin_applications WHERE LOWER(email)=LOWER($1) AND status='pending'",[email]);
  if(exists.rowCount) return res.status(409).json({message:'A pending application already exists for this email.'});
  const hash=await bcrypt.hash(password,12);
  await pool.query('INSERT INTO institute_admin_applications(institute_name,applicant_name,email,phone,password_hash,address,state,district,message) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[name,applicant,email,phone,hash,clean(b.address),clean(b.state),clean(b.district),clean(b.message)]);

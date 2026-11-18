@@ -11,7 +11,7 @@ const pages=[
 let failures=0;
 for(const file of pages){
  const html=fs.readFileSync(file,'utf8');
- const scripts=[...html.matchAll(/<script(?:\\s[^>]*)?>([\\s\\S]*?)<\\/script>/gi)];
+ const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
  if(!scripts.length){console.error('No inline script:',file);failures++;continue;}
  for(let i=0;i<scripts.length;i++){
   try{new vm.Script(scripts[i][1],{filename:file+'#script'+i});}

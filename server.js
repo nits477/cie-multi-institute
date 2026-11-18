@@ -303,6 +303,8 @@ function adminShellTags(){const css=fs.readFileSync(path.join(__dirname,'admin-a
 function serveAdminPage(req,res,file){if(!currentAdmin(req))return res.redirect('/admin');const f=path.join(__dirname,'admin',file);if(!fs.existsSync(f))return res.status(404).send('<h2>Admin page not found.</h2>');let html=fs.readFileSync(f,'utf8'),shell=adminShellTags();html=html.includes('</head>')?html.replace('</head>',shell+'</head>'):shell+html;return res.type('html').send(html)}
 function adminLoginPage(){return ADMIN_LOGIN_HTML.replace("$('loginBtn').onclick=async()=>{try{","$('loginBtn').onclick=async()=>{const b=$('loginBtn'),old=b.textContent;b.disabled=true;b.textContent='⏳ Logging in...';try{").replace("}catch(e){msg(e.message)}};$('forgotLink')","}catch(e){msg(e.message)}finally{b.disabled=false;b.textContent=old}};$('forgotLink')")}
 app.get('/student-login',(req,res)=>res.sendFile(path.join(__dirname,'public','student-login.html')));
+app.get('/institute-admin/login',(req,res)=>res.sendFile(path.join(__dirname,'public','institute-admin-login.html')));
+app.get('/institute-admin/dashboard',(req,res)=>res.sendFile(path.join(__dirname,'public','institute-admin-dashboard.html')));
 app.get('/admin',async(req,res)=>{if(!currentAdmin(req))return res.type('html').send(adminLoginPage());return serveAdminPage(req,res,'index.html')});
 app.get('/admin/exams',(req,res)=>serveAdminPage(req,res,'exams.html'));
 app.get('/admin/questions',(req,res)=>res.redirect('/admin/exams')); // Question Bank merged into Exams

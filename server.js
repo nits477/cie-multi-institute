@@ -40,7 +40,7 @@ async function ensureReferralReward(studentId){
   const first=await c.query('SELECT 1 FROM results WHERE student_id=$1 LIMIT 1',[studentId]);
   if(!first.rowCount){await c.query('ROLLBACK');return}
   const rf=await c.query(`SELECT r.id,r.referrer_id,a.referral_enabled,a.referral_reward_amount FROM referrals r CROSS JOIN app_config a WHERE r.referred_student_id=$1 AND r.status='PENDING' AND a.id=1 FOR UPDATE`,[studentId]);
-  if(rf.rowCount&&rf.rows[0].referral_enabled){const z=rf.rows[0],amt=Number(z.referral_reward_amount||0);await c.query(`UPDATE referrals SET status='SUCCESSFUL',reward_amount=$1,reward_credits=0,rewarded_at=NOW() WHERE id=$2`,[amt,z.id]);await c.query('UPDATE students SET wallet_amount=wallet_amount+$1 WHERE id=$2',[amt,z.referrer_id]);await c.query(`INSERT INTO wallet_transactions(student_id,amount,exam_credits,action,reason) VALUES($1,$2,0,'Added','Referral reward: referred student completed first exam')`,[z.referrer_id,amt])}
+  if(rf.rowCount&&rf.rows[0].referral_enabled){const z=rf.rows[0],amt=Number(z.referral_reward_amount||0);await c.query(`UPDATE referrals SET status='SUCCESSFUL',reward_amount=$1,reward_credits=0,rewarded_at=NOW() WHERE id=$2`,[amt,z.id]);await c.query('UPDATE students SET wallet_amount=wallet_amount+$1 WHERE id=$2',[amt,z.referrer_id]);await c.query(`INSERT INTO wallet_transactions(student_id,amount,exam_credits,action,reason,institute_id) VALUES($1,$2,0,'Added','Referral reward: referred student completed first exam',(SELECT institute_id FROM students WHERE id=$1))`,[z.referrer_id,amt])}
   await c.query('COMMIT');
  }catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
 }

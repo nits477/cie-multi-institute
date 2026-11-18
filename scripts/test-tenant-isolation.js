@@ -22,6 +22,8 @@ async function expectFkFailure(client,name,sql,params){
   assert.equal(Number(legacyCategory.institute_id),Number(cie),'Legacy paper category must default to CIE tenant');
   const legacyPaper=(await c.query("INSERT INTO old_papers(category_id,title,pdf_data,file_name) VALUES($1,'Legacy Paper',decode('00','hex'),'legacy.pdf') RETURNING id,institute_id",[legacyCategory.id])).rows[0];
   assert.equal(Number(legacyPaper.institute_id),Number(cie),'Legacy paper tenant must derive from its category');
+  const legacyOrder=(await c.query("INSERT INTO old_paper_orders(paper_id,customer_name,mobile,address,pincode) VALUES($1,'Legacy Buyer','9999999999','Address','248001') RETURNING institute_id",[legacyPaper.id])).rows[0];
+  assert.equal(Number(legacyOrder.institute_id),Number(cie),'Legacy order tenant must derive from its paper');
   const a=(await c.query("INSERT INTO institutes(institute_code,institute_name,status) VALUES($1,$2,'active') RETURNING id",['TSTA'+uid,'Tenant Test A'])).rows[0].id;
   const b=(await c.query("INSERT INTO institutes(institute_code,institute_name,status) VALUES($1,$2,'active') RETURNING id",['TSTB'+uid,'Tenant Test B'])).rows[0].id;
   const mobile='98'+uid.replace(/[^0-9]/g,'').padEnd(8,'1').slice(0,8);

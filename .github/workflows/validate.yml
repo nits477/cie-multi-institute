@@ -7,6 +7,25 @@ on:
 jobs:
   node-check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cie_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cie_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/cie_test
+      NODE_ENV: test
+      ADMIN_SESSION_SECRET: test-only-session-secret-change-me-123456789
+      JWT_SECRET: test-only-jwt-secret-change-me-123456789
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,3 +36,18 @@ jobs:
       - run: node --check server.js
       - run: node --check public/app.js
       - run: node scripts/check-inline-js.js
+      - name: Start app and apply migrations to disposable PostgreSQL
+        run: |
+          node server.js > /tmp/cie-server.log 2>&1 &
+          echo $! > /tmp/cie-server.pid
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:3000/api/health >/dev/null; then
+              echo "CIE app is healthy and database migrations completed."
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/cie-server.log
+          exit 1
+      - name: Verify tenant isolation constraints
+        run: node scripts/test-tenant-isolation.js

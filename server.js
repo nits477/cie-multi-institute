@@ -313,6 +313,8 @@ function serveAdminPage(req,res,file){if(!currentAdmin(req))return res.redirect(
 function adminLoginPage(){return ADMIN_LOGIN_HTML.replace("$('loginBtn').onclick=async()=>{try{","$('loginBtn').onclick=async()=>{const b=$('loginBtn'),old=b.textContent;b.disabled=true;b.textContent='⏳ Logging in...';try{").replace("}catch(e){msg(e.message)}};$('forgotLink')","}catch(e){msg(e.message)}finally{b.disabled=false;b.textContent=old}};$('forgotLink')")}
 app.get('/student-login',(req,res)=>res.sendFile(path.join(__dirname,'public','student-login.html')));
 app.get('/institute-admin/login',(req,res)=>res.sendFile(path.join(__dirname,'public','institute-admin-login.html')));
+app.get('/master-admin',(req,res)=>res.sendFile(path.join(__dirname,'public','master-admin.html')));
+app.get('/institute/register',(req,res)=>res.sendFile(path.join(__dirname,'public','institute-register.html')));
 app.get('/institute-admin/dashboard',(req,res)=>res.sendFile(path.join(__dirname,'public','institute-admin-dashboard.html')));
 app.get('/institute-admin/manage',(req,res)=>res.sendFile(path.join(__dirname,'public','institute-admin-management.html')));
 app.get('/admin',async(req,res)=>{if(!currentAdmin(req))return res.type('html').send(adminLoginPage());return serveAdminPage(req,res,'index.html')});

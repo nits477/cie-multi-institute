@@ -60,7 +60,8 @@ function requireAdmin(req,res,next){const a=currentAdmin(req);if(!a)return res.s
 async function sendAdminResetEmail(to,resetUrl){const key=process.env.RESEND_API_KEY||'';const from=process.env.ADMIN_FROM_EMAIL||'CIE Exam <onboarding@resend.dev>';if(!key)throw new Error('Email recovery is not configured yet. Add RESEND_API_KEY in Render Environment.');const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({from,to,subject:'CIE Exam Admin Password Reset',html:`<p>A password reset was requested for the CIE Exam Admin Portal.</p><p><a href="${resetUrl}">Reset Admin Password</a></p><p>This link expires in 20 minutes. If you did not request this, ignore this email.</p>`})});if(!r.ok){const t=await r.text();throw new Error('Could not send reset email: '+t)}}
 
 async function initDb(){if(!useDb)return;await pool.query(`
-CREATE TABLE IF NOT EXISTS students(id BIGSERIAL PRIMARY KEY,name TEXT NOT NULL,father_name TEXT NOT NULL,mobile TEXT UNIQUE NOT NULL,created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS institutes(id BIGSERIAL PRIMARY KEY,institute_code TEXT NOT NULL UNIQUE,institute_name TEXT NOT NULL,email TEXT,phone TEXT,address TEXT,state TEXT,district TEXT,status TEXT NOT NULL DEFAULT 'active',created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS students(id BIGSERIAL PRIMARY KEY,name TEXT NOT NULL,father_name TEXT NOT NULL,mobile TEXT NOT NULL,created_at TIMESTAMPTZ DEFAULT NOW());
 ALTER TABLE students ADD COLUMN IF NOT EXISTS pin_hash TEXT;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS wallet_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS exam_credits INTEGER NOT NULL DEFAULT 0;
@@ -176,6 +177,37 @@ CREATE TABLE IF NOT EXISTS app_config(
  referral_reward_amount NUMERIC(12,2) NOT NULL DEFAULT 0,referral_reward_credits INTEGER NOT NULL DEFAULT 1,
  updated_at TIMESTAMPTZ DEFAULT NOW());
 INSERT INTO app_config(id) VALUES(1) ON CONFLICT(id) DO NOTHING;
+`);
+// Tenant foundation: preserve all legacy records under the default CIE institute.
+await pool.query(`
+INSERT INTO institutes(institute_code,institute_name,status)
+VALUES('CIE0001','Career Institute of Education (CIE)','active')
+ON CONFLICT(institute_code) DO NOTHING;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS institute_id BIGINT;
+UPDATE students SET institute_id=(SELECT id FROM institutes WHERE institute_code='CIE0001')
+WHERE institute_id IS NULL;
+ALTER TABLE students ALTER COLUMN institute_id SET NOT NULL;
+ALTER TABLE students DROP CONSTRAINT IF EXISTS students_mobile_key;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_students_institute_mobile ON students(institute_id,mobile);
+CREATE INDEX IF NOT EXISTS idx_students_institute_created ON students(institute_id,created_at DESC);
+ALTER TABLE students DROP CONSTRAINT IF EXISTS students_institute_id_fkey;
+ALTER TABLE students ADD CONSTRAINT students_institute_id_fkey FOREIGN KEY(institute_id) REFERENCES institutes(id);
+ALTER TABLE exams ADD COLUMN IF NOT EXISTS institute_id BIGINT;
+UPDATE exams SET institute_id=(SELECT id FROM institutes WHERE institute_code='CIE0001') WHERE institute_id IS NULL;
+ALTER TABLE exams ALTER COLUMN institute_id SET NOT NULL;
+ALTER TABLE questions ADD COLUMN IF NOT EXISTS institute_id BIGINT;
+UPDATE questions SET institute_id=(SELECT id FROM institutes WHERE institute_code='CIE0001') WHERE institute_id IS NULL;
+ALTER TABLE questions ALTER COLUMN institute_id SET NOT NULL;
+ALTER TABLE results ADD COLUMN IF NOT EXISTS institute_id BIGINT;
+UPDATE results SET institute_id=(SELECT id FROM institutes WHERE institute_code='CIE0001') WHERE institute_id IS NULL;
+ALTER TABLE results ALTER COLUMN institute_id SET NOT NULL;
+ALTER TABLE exam_sessions ADD COLUMN IF NOT EXISTS institute_id BIGINT;
+UPDATE exam_sessions SET institute_id=(SELECT id FROM institutes WHERE institute_code='CIE0001') WHERE institute_id IS NULL;
+ALTER TABLE exam_sessions ALTER COLUMN institute_id SET NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_exams_institute ON exams(institute_id,active);
+CREATE INDEX IF NOT EXISTS idx_questions_institute_exam ON questions(institute_id,exam_id);
+CREATE INDEX IF NOT EXISTS idx_results_institute_created ON results(institute_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_institute_student ON exam_sessions(institute_id,student_id,started_at DESC);
 `);
 const envAdminId=norm(process.env.ADMIN_ID),envAdminPassword=String(process.env.ADMIN_PASSWORD||''),envAdminEmail=norm(process.env.ADMIN_EMAIL);
 if(envAdminId&&envAdminPassword){const a=await pool.query('SELECT id,email FROM admins WHERE admin_id=$1',[envAdminId]);if(!a.rowCount){const ph=await bcrypt.hash(envAdminPassword,12);await pool.query('INSERT INTO admins(admin_id,name,email,password_hash) VALUES($1,$2,$3,$4)',[envAdminId,'Super Admin',envAdminEmail||null,ph]);console.log('Initial admin account created from Render environment.')}else if(envAdminEmail&&!a.rows[0].email){await pool.query('UPDATE admins SET email=$1,updated_at=NOW() WHERE admin_id=$2',[envAdminEmail,envAdminId])}}
@@ -299,6 +331,27 @@ app.use('/api/admin',(req,res,next)=>{if(req.path.startsWith('/auth/'))return ne
 app.use('/api/results',requireAdmin);
 app.get('/api/health',(req,res)=>res.json({ok:true,mode:useDb?'postgres':'local-json',version:'3.3'}));
 
+// Institute-aware student registration/login for the multi-institute portal.
+app.post('/api/student/register',async(req,res)=>{try{
+ if(!useDb)return res.status(503).json({error:'Database required.'});
+ const b=req.body||{},code=norm(b.instituteCode).toUpperCase(),name=norm(b.fullName||b.name),fatherName=norm(b.fatherName)||'Not Provided',mobile=norm(b.mobile),pin=String(b.pin||'');
+ if(!/^[A-Z0-9-]{3,20}$/.test(code))return res.status(400).json({error:'Enter a valid Institute Code.'});
+ if(!validFullName(name))return res.status(400).json({error:'Enter full Student Name using letters only (at least 2 words).'});
+ if(!validMobile(mobile)||!validPin(pin))return res.status(400).json({error:'Enter a valid 10-digit mobile and 4-digit PIN.'});
+ const ir=await pool.query("SELECT id,institute_name FROM institutes WHERE UPPER(institute_code)=UPPER($1) AND status='active'",[code]);
+ if(!ir.rowCount)return res.status(404).json({error:'Institute Code not found or institute is inactive.'});
+ const hash=await bcrypt.hash(pin,12);
+ const q=await pool.query('INSERT INTO students(institute_id,name,father_name,mobile,pin_hash) VALUES($1,$2,$3,$4,$5) RETURNING id,name,father_name,mobile,created_at',[ir.rows[0].id,name,fatherName,mobile,hash]);
+ res.status(201).json({ok:true,student:{...studentPublic(q.rows[0]),instituteCode:code,instituteName:ir.rows[0].institute_name}});
+}catch(e){if(e.code==='23505')return res.status(409).json({error:'This mobile is already registered with this institute.'});res.status(500).json({error:e.message})}});
+app.post('/api/student/login',async(req,res)=>{try{
+ if(!useDb)return res.status(503).json({error:'Database required.'});
+ const code=norm(req.body?.instituteCode).toUpperCase(),mobile=norm(req.body?.mobile),pin=String(req.body?.pin||'');
+ if(!/^[A-Z0-9-]{3,20}$/.test(code)||!validMobile(mobile)||!validPin(pin))return res.status(400).json({error:'Enter Institute Code, 10-digit mobile and 4-digit PIN.'});
+ const q=await pool.query("SELECT s.id,s.name,s.father_name,s.mobile,s.pin_hash,s.wallet_amount,s.exam_credits,s.referral_code,i.institute_code,i.institute_name FROM students s JOIN institutes i ON i.id=s.institute_id WHERE UPPER(i.institute_code)=UPPER($1) AND s.mobile=$2 AND i.status='active'",[code,mobile]);
+ if(!q.rowCount||!q.rows[0].pin_hash||!(await bcrypt.compare(pin,q.rows[0].pin_hash)))return res.status(401).json({error:'Institute Code, mobile or PIN is incorrect.'});
+ const u=q.rows[0];res.json({ok:true,student:{...studentPublic(u),instituteCode:u.institute_code,instituteName:u.institute_name}});
+}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/register',async(req,res)=>{try{const b=req.body||{},name=norm(b.name),fatherName=norm(b.fatherName),mobile=norm(b.mobile),pin=String(b.pin||''),referralCode=norm(b.referralCode).toUpperCase();if(!validFullName(name))return res.status(400).json({error:'Enter full Student Name using letters only (at least 2 words).'});if(!validFullName(fatherName))return res.status(400).json({error:'Enter full Father Name using letters only (at least 2 words).'});if(!validMobile(mobile))return res.status(400).json({error:'Mobile Number must be exactly 10 digits.'});if(!validPin(pin))return res.status(400).json({error:'PIN must be exactly 4 digits.'});const pinHash=await bcrypt.hash(pin,10);if(useDb){let referrerId=null;if(referralCode){const rr=await pool.query('SELECT id FROM students WHERE UPPER(referral_code)=$1',[referralCode]);if(!rr.rowCount)return res.status(400).json({error:'Referral code is invalid.'});referrerId=rr.rows[0].id}const c=await pool.connect();try{await c.query('BEGIN');const q=await c.query('INSERT INTO students(name,father_name,mobile,pin_hash,referred_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT(mobile) DO NOTHING RETURNING id,name,father_name,mobile,pin_hash,wallet_amount,referral_code',[name,fatherName,mobile,pinHash,referrerId]);if(!q.rowCount){await c.query('ROLLBACK');return res.status(409).json({error:'Mobile already registered. Please Login.'})}const code='CIE'+String(q.rows[0].id).padStart(6,'0');const u=(await c.query('UPDATE students SET referral_code=$1 WHERE id=$2 RETURNING id,name,father_name,mobile,pin_hash,wallet_amount,referral_code',[code,q.rows[0].id])).rows[0];if(referrerId)await c.query('INSERT INTO referrals(referrer_id,referred_student_id) VALUES($1,$2) ON CONFLICT(referred_student_id) DO NOTHING',[referrerId,u.id]);await c.query('COMMIT');return res.json({ok:true,student:studentPublic(u)})}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}const s=readLocal('students.json');if(s.some(x=>String(x.mobile)===mobile))return res.status(409).json({error:'Mobile already registered. Please Login.'});const x={id:Date.now(),name,fatherName,mobile,pinHash,referralCode:'CIE'+Date.now(),walletAmount:0,createdAt:new Date().toISOString()};s.push(x);writeLocal('students.json',s);res.json({ok:true,student:studentPublic(x)})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/login',async(req,res)=>{try{const mobile=norm(req.body?.mobile),pin=String(req.body?.pin||'');if(!validMobile(mobile)||!validPin(pin))return res.status(400).json({error:'Enter 10-digit Mobile Number and 4-digit PIN.'});const s=await verifyStudent(mobile,pin);if(!s)return res.status(401).json({error:'Mobile Number or PIN is incorrect.'});let popup=null;if(useDb){const q=await pool.query(`SELECT id,title,message,button_text AS "buttonText",button_url AS "buttonUrl",(image_data IS NOT NULL) AS "hasImage" FROM student_popups WHERE active=true AND BTRIM(message)<>'' ORDER BY updated_at DESC,id DESC LIMIT 1`);if(q.rowCount){popup={...q.rows[0],imageUrl:q.rows[0].hasImage?('/api/student-popup/'+q.rows[0].id+'/image'):null};delete popup.hasImage}}res.json({ok:true,student:studentPublic(s),popup})}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/student-popup/:id/image',async(req,res)=>{try{if(!useDb)return res.status(404).end();const q=await pool.query('SELECT image_data,image_mime FROM student_popups WHERE id=$1 AND active=true AND image_data IS NOT NULL',[req.params.id]);if(!q.rowCount)return res.status(404).end();res.type(q.rows[0].image_mime||'image/jpeg').send(q.rows[0].image_data)}catch(e){res.status(500).json({error:e.message})}});

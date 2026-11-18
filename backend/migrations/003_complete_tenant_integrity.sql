@@ -96,7 +96,9 @@ DECLARE cie_id BIGINT; derived_id BIGINT;
 BEGIN
  SELECT id INTO cie_id FROM institutes WHERE institute_code='CIE0001';
  IF NEW.institute_id IS NULL THEN
-   IF TG_TABLE_NAME='old_papers' AND NEW.category_id IS NOT NULL THEN
+   IF TG_TABLE_NAME='questions' AND NEW.exam_id IS NOT NULL THEN
+     SELECT institute_id INTO derived_id FROM exams WHERE id=NEW.exam_id;
+   ELSIF TG_TABLE_NAME='old_papers' AND NEW.category_id IS NOT NULL THEN
      SELECT institute_id INTO derived_id FROM old_paper_categories WHERE id=NEW.category_id;
    ELSIF TG_TABLE_NAME='old_paper_orders' AND NEW.paper_id IS NOT NULL THEN
      SELECT institute_id INTO derived_id FROM old_papers WHERE id=NEW.paper_id;
@@ -105,6 +107,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $;
+DROP TRIGGER IF EXISTS exams_default_tenant ON exams;
+CREATE TRIGGER exams_default_tenant BEFORE INSERT OR UPDATE OF institute_id ON exams FOR EACH ROW EXECUTE FUNCTION cie_default_tenant_before_write();
+DROP TRIGGER IF EXISTS questions_default_tenant ON questions;
+CREATE TRIGGER questions_default_tenant BEFORE INSERT OR UPDATE OF institute_id ON questions FOR EACH ROW EXECUTE FUNCTION cie_default_tenant_before_write();
 DROP TRIGGER IF EXISTS promotions_default_tenant ON promotions;
 CREATE TRIGGER promotions_default_tenant BEFORE INSERT OR UPDATE OF institute_id ON promotions FOR EACH ROW EXECUTE FUNCTION cie_default_tenant_before_write();
 DROP TRIGGER IF EXISTS student_popups_default_tenant ON student_popups;

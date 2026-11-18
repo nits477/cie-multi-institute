@@ -423,10 +423,16 @@ app.get('/api/institute-admin/exams',requireInstituteAdmin,async(req,res)=>{
 });
 app.post('/api/institute-admin/exams',requireInstituteAdmin,async(req,res)=>{
  try{
-  const name=norm(req.body?.name),passing=Number(req.body?.passingPercentage??40);
-  if(name.length<3||!Number.isFinite(passing)||passing<0||passing>100)return res.status(400).json({error:'Enter exam name and passing percentage from 0 to 100.'});
-  const r=await pool.query("INSERT INTO exams(institute_id,name,timer_mode,duration_minutes,passing_percentage,attempt_limit,active) VALUES($1,$2,$3,$4,$5,$6,false) RETURNING id,name,active,passing_percentage AS \"passingPercentage\"",[req.instituteAdmin.instituteId,name,['none','whole','per-question','both'].includes(req.body?.timerMode)?req.body.timerMode:'none',Math.max(0,Math.min(600,Number(req.body?.durationMinutes)||0)),passing,Math.max(0,Math.min(100,Number(req.body?.attemptLimit)||0))]);
-  res.status(201).json({ok:true,exam:r.rows[0],message:'Exam created as inactive. Add questions and activate it after review.'});
+  const b=req.body||{},name=norm(b.name),timerMode=String(b.timerMode||'none');
+  if(name.length<3||!['none','whole','per_question','both'].includes(timerMode))return res.status(400).json({error:'Enter exam name and valid timer mode.'});
+  const duration=clampInt(b.durationMinutes,0,1440,0),per=clampInt(b.perQuestionSeconds,0,3600,0),ql=clampInt(b.questionLimit,0,1000,0),passing=Number(b.passingPercentage??40),attempt=clampInt(b.attemptLimit,0,100,0),negativeMark=Math.max(0,Math.min(10,Number(b.negativeMarkValue)||0));
+  if(!Number.isFinite(passing)||passing<0||passing>100)return res.status(400).json({error:'Passing percentage must be 0 to 100.'});
+  if((timerMode==='whole'||timerMode==='both')&&duration<1)return res.status(400).json({error:'Duration Minutes required.'});
+  if((timerMode==='per_question'||timerMode==='both')&&per<1)return res.status(400).json({error:'Per Question Seconds required.'});
+  const start=b.startAt?new Date(b.startAt):null,end=b.endAt?new Date(b.endAt):null;
+  if(start&&isNaN(start)||end&&isNaN(end)||start&&end&&end<=start)return res.status(400).json({error:'Invalid exam dates.'});
+  const r=await pool.query('INSERT INTO exams(institute_id,name,start_at,end_at,timer_mode,duration_minutes,per_question_seconds,question_limit,passing_percentage,attempt_limit,negative_mark_value,random_questions,active) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,false) RETURNING id,name,active,passing_percentage AS "passingPercentage"',[req.instituteAdmin.instituteId,name,start,end,timerMode,duration,per,ql,passing,attempt,negativeMark,!!b.randomQuestions]);
+  res.status(201).json({ok:true,exam:r.rows[0],message:'Exam created inactive. Add questions and activate after review.'});
  }catch(e){res.status(500).json({error:'Could not create institute exam.'})}
 });
 

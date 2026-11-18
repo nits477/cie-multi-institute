@@ -98,6 +98,9 @@ BEGIN
  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='question_reports_exam_tenant_fk') THEN
   ALTER TABLE question_reports ADD CONSTRAINT question_reports_exam_tenant_fk FOREIGN KEY(exam_id,institute_id) REFERENCES exams(id,institute_id) NOT VALID;
  END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='question_reports_question_tenant_fk') THEN
+  ALTER TABLE question_reports ADD CONSTRAINT question_reports_question_tenant_fk FOREIGN KEY(question_id,institute_id) REFERENCES questions(id,institute_id) NOT VALID;
+ END IF;
  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='wallet_transactions_student_tenant_fk') THEN
   ALTER TABLE wallet_transactions ADD CONSTRAINT wallet_transactions_student_tenant_fk FOREIGN KEY(student_id,institute_id) REFERENCES students(id,institute_id) NOT VALID;
  END IF;
@@ -125,6 +128,7 @@ ALTER TABLE results VALIDATE CONSTRAINT results_student_tenant_fk;
 ALTER TABLE results VALIDATE CONSTRAINT results_exam_tenant_fk;
 ALTER TABLE question_reports VALIDATE CONSTRAINT question_reports_student_tenant_fk;
 ALTER TABLE question_reports VALIDATE CONSTRAINT question_reports_exam_tenant_fk;
+ALTER TABLE question_reports VALIDATE CONSTRAINT question_reports_question_tenant_fk;
 ALTER TABLE wallet_transactions VALIDATE CONSTRAINT wallet_transactions_student_tenant_fk;
 ALTER TABLE referrals VALIDATE CONSTRAINT referrals_referrer_tenant_fk;
 ALTER TABLE referrals VALIDATE CONSTRAINT referrals_referred_tenant_fk;

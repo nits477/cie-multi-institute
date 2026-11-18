@@ -338,6 +338,19 @@ app.get('/api/public/promotions',async(req,res)=>{try{if(!useDb)return res.json(
 function signInstituteAdminToken(admin){const payload=Buffer.from(JSON.stringify({adminId:admin.admin_id,role:'institute_admin',instituteId:Number(admin.institute_id),exp:Date.now()+SESSION_TTL_MS})).toString('base64url');const sig=crypto.createHmac('sha256',SESSION_SECRET).update(payload).digest('base64url');return payload+'.'+sig}
 function setInstituteAdminCookie(res,admin){res.cookie(ADMIN_COOKIE,signInstituteAdminToken(admin),{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'lax',maxAge:SESSION_TTL_MS,path:'/'})}
 function requireSuperAdmin(req,res,next){const a=currentAdmin(req);if(!a||a.role!=='super_admin')return res.status(403).json({error:'Master Admin permission required.'});req.admin=a;next()}
+app.get('/api/master/institutes',requireSuperAdmin,async(req,res)=>{try{
+ const q=await pool.query("SELECT i.id,i.institute_code AS \"instituteCode\",i.institute_name AS \"instituteName\",i.email,i.phone,i.state,i.district,i.status,i.created_at AS \"createdAt\",(SELECT COUNT(*)::int FROM students s WHERE s.institute_id=i.id) AS students_count FROM institutes i ORDER BY i.created_at DESC,i.id DESC");
+ res.json(q.rows);
+}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/master/institutes',requireSuperAdmin,async(req,res)=>{try{
+ if(!useDb)return res.status(503).json({error:'Database required.'});
+ const name=norm(req.body?.instituteName||req.body?.name),email=norm(req.body?.email).toLowerCase(),phone=norm(req.body?.phone),state=norm(req.body?.state),district=norm(req.body?.district);
+ if(!name)return res.status(400).json({error:'Institute name is required.'});
+ let code='';for(let attempt=0;attempt<8;attempt++){code='CIE'+crypto.randomBytes(3).toString('hex').toUpperCase();const exists=await pool.query('SELECT 1 FROM institutes WHERE institute_code=$1',[code]);if(!exists.rowCount)break;code=''}
+ if(!code)return res.status(500).json({error:'Could not generate a unique Institute Code.'});
+ const q=await pool.query("INSERT INTO institutes(institute_code,institute_name,email,phone,state,district,status) VALUES($1,$2,$3,$4,$5,$6,'active') RETURNING id,institute_code AS \"instituteCode\",institute_name AS \"instituteName\",email,phone,state,district,status,created_at AS \"createdAt\"",[code,name,email||null,phone||null,state||null,district||null]);
+ res.status(201).json({ok:true,institute:q.rows[0]});
+}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/master/institutes/:id/admin',requireSuperAdmin,async(req,res)=>{try{
  if(!useDb)return res.status(503).json({error:'Database required.'});
  const instituteId=Number(req.params.id),adminId=norm(req.body?.adminId),fullName=norm(req.body?.fullName),email=norm(req.body?.email).toLowerCase(),password=String(req.body?.password||'');

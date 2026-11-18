@@ -29,7 +29,7 @@ async function expectFkFailure(client,name,sql,params){
   await c.query("INSERT INTO question_reports(student_id,exam_id,question_id,reason,institute_id) VALUES($1,$2,$3,'Test',$4)",[sa,ea,qa,a]);
   await expectFkFailure(c,'cross_question_report','INSERT INTO question_reports(student_id,exam_id,question_id,reason,institute_id) VALUES($1,$2,$3,$4,$5)',[sa,eb,qa,'bad',a]);
   await c.query("INSERT INTO wallet_transactions(student_id,amount,action,institute_id) VALUES($1,1,'Test',$2)",[sa,a]);
-  await expectFkFailure(c,'cross_wallet','INSERT INTO wallet_transactions(student_id,amount,action,institute_id) VALUES($1,1,\\'Test\\',$2)',[sa,b]);
+  await expectFkFailure(c,'cross_wallet','INSERT INTO wallet_transactions(student_id,amount,action,institute_id) VALUES($1,1,$2,$3)',[sa,'Test',b]);
   await c.query("INSERT INTO pin_reset_requests(student_id,mobile,institute_id) VALUES($1,$2,$3)",[sa,mobile,a]);
   await expectFkFailure(c,'cross_pin_reset','INSERT INTO pin_reset_requests(student_id,mobile,institute_id) VALUES($1,$2,$3)',[sa,mobile,b]);
   const ca=(await c.query('INSERT INTO old_paper_categories(name,institute_id) VALUES($1,$2) RETURNING id',['catA'+uid,a])).rows[0].id;

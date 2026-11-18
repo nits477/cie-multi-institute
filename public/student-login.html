@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CIE Student Portal</title>
+<style>
+:root{--navy:#082653;--blue:#1265c7;--gold:#f2bd45;--ink:#172b49;--muted:#65758b;--line:#dce6f1}
+*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:linear-gradient(135deg,#edf5ff,#f8fbff);color:var(--ink);min-height:100vh;display:grid;place-items:center;padding:22px}
+.wrap{width:min(100%,460px)}.brand{background:linear-gradient(135deg,#071b3c,#0b58b8);color:#fff;border-radius:22px 22px 0 0;padding:26px}.brand h1{margin:0;font-size:25px}.brand p{margin:7px 0 0;color:#d9eaff;font-size:14px}
+.panel{background:#fff;padding:25px;border:1px solid var(--line);border-top:0;border-radius:0 0 22px 22px;box-shadow:0 18px 45px #123d6b18}
+.tabs{display:flex;background:#eef4fb;padding:4px;border-radius:11px;margin-bottom:20px}.tabs button{flex:1;border:0;padding:11px;border-radius:8px;background:transparent;color:#52647b;font-weight:700;cursor:pointer}.tabs button.active{background:#fff;color:var(--blue);box-shadow:0 2px 8px #12365b16}
+label{display:block;font-size:13px;font-weight:700;margin:13px 0 6px}input{width:100%;padding:13px;border:1px solid #cbd8e7;border-radius:10px;font-size:15px;outline:none}input:focus{border-color:var(--blue);box-shadow:0 0 0 3px #1265c71a}
+.submit{width:100%;border:0;border-radius:10px;padding:14px;background:linear-gradient(135deg,#176bd0,#084b9f);color:white;font-size:15px;font-weight:800;margin-top:20px;cursor:pointer}.msg{font-size:13px;line-height:1.5;margin-top:14px}.error{color:#b42318}.success{color:#137333}.hint{color:var(--muted);font-size:12px;margin-top:13px}.hidden{display:none}.profile{background:#f5f9ff;border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:16px}.profile b{display:block;margin-bottom:6px}.logout{background:#fff;color:#a12b2b;border:1px solid #e5bcbc;border-radius:8px;padding:9px 13px;margin-top:12px;cursor:pointer}
+</style>
+</head>
+<body><main class="wrap">
+<header class="brand"><h1>CIE Student Portal</h1><p>Institute-wise student registration and secure login</p></header>
+<section class="panel">
+<div id="authArea">
+<div class="tabs"><button id="loginTab" class="active" type="button">Student Login</button><button id="registerTab" type="button">New Registration</button></div>
+<form id="loginForm">
+<label for="loginCode">Institute Code</label><input id="loginCode" autocomplete="organization" required maxlength="20" placeholder="e.g. CIE0001">
+<label for="loginMobile">Mobile Number</label><input id="loginMobile" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required placeholder="10-digit mobile number">
+<label for="loginPin">4-digit PIN</label><input id="loginPin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required placeholder="Enter your PIN">
+<button class="submit" type="submit">Sign In</button>
+</form>
+<form id="registerForm" class="hidden">
+<label for="regCode">Institute Code</label><input id="regCode" required maxlength="20" placeholder="Institute Code">
+<label for="regName">Student Full Name</label><input id="regName" required maxlength="100" placeholder="Full name">
+<label for="regFather">Father Name (optional)</label><input id="regFather" maxlength="100" placeholder="Father name">
+<label for="regMobile">Mobile Number</label><input id="regMobile" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required placeholder="10-digit mobile number">
+<label for="regPin">Create 4-digit PIN</label><input id="regPin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required placeholder="Choose 4 digits">
+<button class="submit" type="submit">Create Student Account</button>
+</form>
+<div id="message" class="msg" role="status"></div>
+<p class="hint">Use the Institute Code provided by your institute. The same mobile number can be registered with different institutes.</p>
+</div>
+<div id="profileArea" class="hidden"><h2>Student Account</h2><div id="profile" class="profile"></div><button id="logout" class="logout" type="button">Sign Out</button></div>
+</section></main>
+<script>
+const $=id=>document.getElementById(id);
+function showMessage(text,ok=false){$('message').textContent=text;$('message').className='msg '+(ok?'success':'error')}
+function switchMode(mode){const login=mode==='login';$('loginForm').classList.toggle('hidden',!login);$('registerForm').classList.toggle('hidden',login);$('loginTab').classList.toggle('active',login);$('registerTab').classList.toggle('active',!login);$('message').textContent=''}
+async function post(url,data){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const j=await r.json().catch(()=>({message:'Invalid server response'}));if(!r.ok)throw Error(j.message||'Request failed');return j}
+function showProfile(student){$('authArea').classList.add('hidden');$('profileArea').classList.remove('hidden');$('profile').innerHTML='<b>'+escapeHtml(student.full_name)+'</b>Institute: '+escapeHtml(student.institute_name)+'<br>Institute Code: '+escapeHtml(student.institute_code||'')+'<br>Mobile: '+escapeHtml(student.mobile); }
+function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+$('loginTab').onclick=()=>switchMode('login');$('registerTab').onclick=()=>switchMode('register');
+$('loginForm').onsubmit=async e=>{e.preventDefault();try{const j=await post('/api/student/login',{instituteCode:$('loginCode').value,mobile:$('loginMobile').value,pin:$('loginPin').value});sessionStorage.setItem('cieStudentToken',j.token);const r=await fetch('/api/student/me',{headers:{Authorization:'Bearer '+j.token}});const student=await r.json();if(!r.ok)throw Error(student.message||'Could not load student account');showProfile(student)}catch(err){showMessage(err.message)}};
+$('registerForm').onsubmit=async e=>{e.preventDefault();try{const j=await post('/api/student/register',{instituteCode:$('regCode').value,fullName:$('regName').value,fatherName:$('regFather').value,mobile:$('regMobile').value,pin:$('regPin').value});sessionStorage.setItem('cieStudentToken',j.token);const r=await fetch('/api/student/me',{headers:{Authorization:'Bearer '+j.token}});const student=await r.json();if(!r.ok)throw Error(student.message||'Could not load student account');showProfile(student)}catch(err){showMessage(err.message)}};
+$('logout').onclick=()=>{sessionStorage.removeItem('cieStudentToken');$('profileArea').classList.add('hidden');$('authArea').classList.remove('hidden');$('loginForm').reset();$('registerForm').reset();showMessage('You have signed out.',true)};
+(async()=>{const token=sessionStorage.getItem('cieStudentToken');if(!token)return;try{const r=await fetch('/api/student/me',{headers:{Authorization:'Bearer '+token}});const j=await r.json();if(!r.ok)throw Error();showProfile(j)}catch{sessionStorage.removeItem('cieStudentToken')}})();
+</script></body></html>

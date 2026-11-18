@@ -387,6 +387,48 @@ app.get('/api/institute-admin/dashboard',async(req,res)=>{try{
  ]);
  const info=await pool.query('SELECT institute_code,institute_name FROM institutes WHERE id=$1',[a.instituteId]);res.json({instituteId:a.instituteId,instituteCode:info.rows[0]?.institute_code,instituteName:info.rows[0]?.institute_name,students:students.rows[0].count,exams:exams.rows[0].count,results:results.rows[0].count});
 }catch(e){res.status(500).json({error:e.message})}});
+
+// Institute Admin APIs — every query is pinned to the authenticated institute.
+async function requireInstituteAdmin(req,res,next){
+ try{
+  const a=currentAdmin(req);
+  if(!a||a.role!=='institute_admin'||!Number.isInteger(Number(a.instituteId)))return res.status(401).json({error:'Institute Admin login required.'});
+  const q=await pool.query("SELECT a.admin_id FROM institute_admins a JOIN institutes i ON i.id=a.institute_id WHERE a.admin_id=$1 AND a.institute_id=$2 AND a.is_active=true AND i.status='active'",[a.adminId,a.instituteId]);
+  if(!q.rowCount)return res.status(401).json({error:'Institute Admin account inactive.'});
+  req.instituteAdmin={adminId:a.adminId,instituteId:Number(a.instituteId)};next();
+ }catch(e){res.status(500).json({error:'Could not verify Institute Admin permissions.'})}
+}
+app.get('/api/institute-admin/students',requireInstituteAdmin,async(req,res)=>{
+ try{
+  const q=norm(req.query.q).slice(0,80);
+  const r=await pool.query("SELECT id,name,father_name AS \"fatherName\",mobile,(pin_hash IS NOT NULL) AS \"pinSet\",created_at AS \"createdAt\" FROM students WHERE institute_id=$1 AND ($2='' OR name ILIKE '%'||$2||'%' OR mobile ILIKE '%'||$2||'%') ORDER BY created_at DESC,id DESC LIMIT 300",[req.instituteAdmin.instituteId,q]);
+  res.json(r.rows);
+ }catch(e){res.status(500).json({error:'Could not load institute students.'})}
+});
+app.post('/api/institute-admin/students',requireInstituteAdmin,async(req,res)=>{
+ try{
+  const name=norm(req.body?.name),father=norm(req.body?.fatherName)||'Not Provided',mobile=norm(req.body?.mobile),pin=String(req.body?.pin||'');
+  if(!validFullName(name)||!validMobile(mobile)||!validPin(pin))return res.status(400).json({error:'Enter full name, valid 10-digit mobile and 4-digit PIN.'});
+  const hash=await bcrypt.hash(pin,12);
+  const r=await pool.query('INSERT INTO students(institute_id,name,father_name,mobile,pin_hash) VALUES($1,$2,$3,$4,$5) RETURNING id,name,father_name AS "fatherName",mobile,created_at AS "createdAt"', [req.instituteAdmin.instituteId,name,father,mobile,hash]);
+  res.status(201).json({ok:true,student:r.rows[0]});
+ }catch(e){if(e.code==='23505')return res.status(409).json({error:'This mobile number is already registered in this institute.'});res.status(500).json({error:'Could not add student.'})}
+});
+app.get('/api/institute-admin/exams',requireInstituteAdmin,async(req,res)=>{
+ try{
+  const r=await pool.query("SELECT e.id,e.name,e.start_at AS \"startAt\",e.end_at AS \"endAt\",e.active,e.passing_percentage AS \"passingPercentage\",(SELECT COUNT(*)::int FROM questions q WHERE q.exam_id=e.id AND q.institute_id=$1) AS \"questionCount\" FROM exams e WHERE e.institute_id=$1 ORDER BY e.created_at DESC,e.id DESC",[req.instituteAdmin.instituteId]);
+  res.json(r.rows);
+ }catch(e){res.status(500).json({error:'Could not load institute exams.'})}
+});
+app.post('/api/institute-admin/exams',requireInstituteAdmin,async(req,res)=>{
+ try{
+  const name=norm(req.body?.name),passing=Number(req.body?.passingPercentage??40);
+  if(name.length<3||!Number.isFinite(passing)||passing<0||passing>100)return res.status(400).json({error:'Enter exam name and passing percentage from 0 to 100.'});
+  const r=await pool.query("INSERT INTO exams(institute_id,name,timer_mode,duration_minutes,passing_percentage,attempt_limit,active) VALUES($1,$2,$3,$4,$5,$6,false) RETURNING id,name,active,passing_percentage AS \"passingPercentage\"",[req.instituteAdmin.instituteId,name,['none','whole','per-question','both'].includes(req.body?.timerMode)?req.body.timerMode:'none',Math.max(0,Math.min(600,Number(req.body?.durationMinutes)||0)),passing,Math.max(0,Math.min(100,Number(req.body?.attemptLimit)||0))]);
+  res.status(201).json({ok:true,exam:r.rows[0],message:'Exam created as inactive. Add questions and activate it after review.'});
+ }catch(e){res.status(500).json({error:'Could not create institute exam.'})}
+});
+
 app.post('/api/admin/auth/login',async(req,res)=>{try{if(!useDb)return res.status(503).json({error:'Database required.'});const adminId=norm(req.body?.adminId),password=String(req.body?.password||'');if(!adminId||!password)return res.status(400).json({error:'Enter Admin ID and Password.'});const q=await pool.query('SELECT admin_id,password_hash,active FROM admins WHERE admin_id=$1',[adminId]);if(!q.rowCount||!q.rows[0].active||!(await bcrypt.compare(password,q.rows[0].password_hash)))return res.status(401).json({error:'Admin ID or Password is incorrect.'});setAdminCookie(res,q.rows[0].admin_id);res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/admin/auth/logout',(req,res)=>{clearAdminCookie(res);res.json({ok:true})});
 app.get('/api/admin/auth/me',requireAdmin,async(req,res)=>{try{const q=await pool.query('SELECT admin_id AS "adminId",name,email FROM admins WHERE admin_id=$1',[req.admin.adminId]);res.json(q.rows[0]||{})}catch(e){res.status(500).json({error:e.message})}});

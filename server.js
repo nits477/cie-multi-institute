@@ -61,7 +61,7 @@ async function sendAdminResetEmail(to,resetUrl){const key=process.env.RESEND_API
 
 async function initDb(){
 if(useDb){
- const databaseName=decodeURIComponent(new URL(DATABASE_URL).pathname.replace(/^\\//,''));
+ const databaseName=decodeURIComponent(new URL(DATABASE_URL).pathname.slice(1));
  if(!['cie_multi_institute_demo_db','cie_test'].includes(databaseName))throw new Error('Safety stop: CIE Multi-Institute migrations are allowed only on cie_multi_institute_demo_db or the disposable cie_test database. Production databases are blocked.');
 }if(!useDb)return;await pool.query(`
 CREATE TABLE IF NOT EXISTS institutes(id BIGSERIAL PRIMARY KEY,institute_code TEXT NOT NULL UNIQUE,institute_name TEXT NOT NULL,email TEXT,phone TEXT,address TEXT,state TEXT,district TEXT,status TEXT NOT NULL DEFAULT 'active',created_at TIMESTAMPTZ DEFAULT NOW());

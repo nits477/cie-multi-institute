@@ -61,6 +61,18 @@ async function sendAdminResetEmail(to,resetUrl){const key=process.env.RESEND_API
 
 async function initDb(){if(!useDb)return;await pool.query(`
 CREATE TABLE IF NOT EXISTS institutes(id BIGSERIAL PRIMARY KEY,institute_code TEXT NOT NULL UNIQUE,institute_name TEXT NOT NULL,email TEXT,phone TEXT,address TEXT,state TEXT,district TEXT,status TEXT NOT NULL DEFAULT 'active',created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS institute_admins(
+ id BIGSERIAL PRIMARY KEY,
+ institute_id BIGINT NOT NULL REFERENCES institutes(id) ON DELETE CASCADE,
+ admin_id TEXT NOT NULL UNIQUE,
+ full_name TEXT NOT NULL,
+ email TEXT,
+ password_hash TEXT NOT NULL,
+ is_active BOOLEAN NOT NULL DEFAULT TRUE,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_institute_admins_institute ON institute_admins(institute_id,is_active);
+
 CREATE TABLE IF NOT EXISTS students(id BIGSERIAL PRIMARY KEY,name TEXT NOT NULL,father_name TEXT NOT NULL,mobile TEXT NOT NULL,created_at TIMESTAMPTZ DEFAULT NOW());
 ALTER TABLE students ADD COLUMN IF NOT EXISTS pin_hash TEXT;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS wallet_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
@@ -320,6 +332,36 @@ app.get('/api/exams/:id/thumbnail',async(req,res)=>{try{if(!useDb||!/^\d+$/.test
 app.get('/api/public/exams',async(req,res)=>{try{if(!useDb)return res.json([]);const q=await pool.query(`SELECT id,name,start_at AS "startAt",end_at AS "endAt",timer_mode AS "timerMode",duration_minutes AS "durationMinutes",per_question_seconds AS "perQuestionSeconds",question_limit AS "questionLimit",passing_percentage AS "passingPercentage",attempt_limit AS "attemptLimit",random_questions AS "randomQuestions",active,thumbnail_mime FROM exams WHERE active=true ORDER BY CASE WHEN start_at IS NULL THEN 1 ELSE 0 END,start_at ASC,id DESC LIMIT 12`);res.json(q.rows.map(x=>({...x,thumbnailUrl:x.thumbnail_mime?('/api/exams/'+Number(x.id)+'/thumbnail'):null,status:nowStatus(examPublic(x))})))}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/public/promotions',async(req,res)=>{try{if(!useDb)return res.json([]);const q=await pool.query('SELECT id,title,subtitle,details,link_text AS "linkText",link_url AS "linkUrl" FROM promotions WHERE active=true ORDER BY sort_order,id');res.json(q.rows)}catch(e){res.status(500).json({error:e.message})}});
 
+
+function signInstituteAdminToken(admin){const payload=Buffer.from(JSON.stringify({adminId:admin.admin_id,role:'institute_admin',instituteId:Number(admin.institute_id),exp:Date.now()+SESSION_TTL_MS})).toString('base64url');const sig=crypto.createHmac('sha256',SESSION_SECRET).update(payload).digest('base64url');return payload+'.'+sig}
+function setInstituteAdminCookie(res,admin){res.cookie(ADMIN_COOKIE,signInstituteAdminToken(admin),{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'lax',maxAge:SESSION_TTL_MS,path:'/'})}
+function requireSuperAdmin(req,res,next){const a=currentAdmin(req);if(!a||a.role!=='super_admin')return res.status(403).json({error:'Master Admin permission required.'});req.admin=a;next()}
+app.post('/api/institute-admin/auth/login',async(req,res)=>{try{
+ if(!useDb)return res.status(503).json({error:'Database required.'});
+ const code=norm(req.body?.instituteCode).toUpperCase(),adminId=norm(req.body?.adminId),password=String(req.body?.password||'');
+ if(!code||!adminId||!password)return res.status(400).json({error:'Institute Code, Admin ID and Password are required.'});
+ const q=await pool.query("SELECT a.id,a.admin_id,a.full_name,a.email,a.password_hash,a.institute_id,i.institute_code,i.institute_name FROM institute_admins a JOIN institutes i ON i.id=a.institute_id WHERE UPPER(i.institute_code)=UPPER($1) AND a.admin_id=$2 AND a.is_active=true AND i.status='active'",[code,adminId]);
+ if(!q.rowCount||!(await bcrypt.compare(password,q.rows[0].password_hash)))return res.status(401).json({error:'Institute Code, Admin ID or Password is incorrect.'});
+ setInstituteAdminCookie(res,q.rows[0]);
+ res.json({ok:true,admin:{adminId:q.rows[0].admin_id,name:q.rows[0].full_name,email:q.rows[0].email,instituteId:q.rows[0].institute_id,instituteCode:q.rows[0].institute_code,instituteName:q.rows[0].institute_name,role:'institute_admin'}});
+}catch(e){res.status(500).json({error:e.message})}});
+app.get('/api/institute-admin/auth/me',async(req,res)=>{try{
+ const a=currentAdmin(req);if(!a||a.role!=='institute_admin')return res.status(401).json({error:'Institute Admin login required.'});
+ const q=await pool.query("SELECT a.admin_id,a.full_name,a.email,a.institute_id,i.institute_code,i.institute_name FROM institute_admins a JOIN institutes i ON i.id=a.institute_id WHERE a.admin_id=$1 AND a.institute_id=$2 AND a.is_active=true AND i.status='active'",[a.adminId,a.instituteId]);
+ if(!q.rowCount)return res.status(401).json({error:'Institute Admin account inactive.'});
+ const x=q.rows[0];res.json({adminId:x.admin_id,name:x.full_name,email:x.email,instituteId:x.institute_id,instituteCode:x.institute_code,instituteName:x.institute_name,role:'institute_admin'});
+}catch(e){res.status(500).json({error:e.message})}});
+app.get('/api/institute-admin/dashboard',async(req,res)=>{try{
+ const a=currentAdmin(req);if(!a||a.role!=='institute_admin')return res.status(401).json({error:'Institute Admin login required.'});
+ const valid=await pool.query("SELECT 1 FROM institute_admins a JOIN institutes i ON i.id=a.institute_id WHERE a.admin_id=$1 AND a.institute_id=$2 AND a.is_active=true AND i.status='active'",[a.adminId,a.instituteId]);
+ if(!valid.rowCount)return res.status(401).json({error:'Institute Admin account inactive.'});
+ const [students,exams,results]=await Promise.all([
+  pool.query('SELECT COUNT(*)::int AS count FROM students WHERE institute_id=$1',[a.instituteId]),
+  pool.query('SELECT COUNT(*)::int AS count FROM exams WHERE institute_id=$1',[a.instituteId]),
+  pool.query('SELECT COUNT(*)::int AS count FROM results WHERE institute_id=$1',[a.instituteId])
+ ]);
+ res.json({instituteId:a.instituteId,students:students.rows[0].count,exams:exams.rows[0].count,results:results.rows[0].count});
+}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/admin/auth/login',async(req,res)=>{try{if(!useDb)return res.status(503).json({error:'Database required.'});const adminId=norm(req.body?.adminId),password=String(req.body?.password||'');if(!adminId||!password)return res.status(400).json({error:'Enter Admin ID and Password.'});const q=await pool.query('SELECT admin_id,password_hash,active FROM admins WHERE admin_id=$1',[adminId]);if(!q.rowCount||!q.rows[0].active||!(await bcrypt.compare(password,q.rows[0].password_hash)))return res.status(401).json({error:'Admin ID or Password is incorrect.'});setAdminCookie(res,q.rows[0].admin_id);res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/admin/auth/logout',(req,res)=>{clearAdminCookie(res);res.json({ok:true})});
 app.get('/api/admin/auth/me',requireAdmin,async(req,res)=>{try{const q=await pool.query('SELECT admin_id AS "adminId",name,email FROM admins WHERE admin_id=$1',[req.admin.adminId]);res.json(q.rows[0]||{})}catch(e){res.status(500).json({error:e.message})}});
@@ -367,9 +409,9 @@ app.post('/api/register',async(req,res)=>{try{
  const u=(await pool.query('UPDATE students SET referral_code=$1 WHERE id=$2 RETURNING id,name,father_name,mobile,pin_hash,wallet_amount,referral_code',[ref,q.rows[0].id])).rows[0];
  res.status(201).json({ok:true,student:studentPublic(u)});
 }catch(e){if(e.code==='23505')return res.status(409).json({error:'Mobile already registered in this institute. Please Login.'});res.status(500).json({error:e.message})}});
-app.post('/api/login',async(req,res)=>{try{const mobile=norm(req.body?.mobile),pin=String(req.body?.pin||'');if(!validMobile(mobile)||!validPin(pin))return res.status(400).json({error:'Enter 10-digit Mobile Number and 4-digit PIN.'});const s=await verifyStudent(mobile,pin,b.instituteCode);if(!s)return res.status(401).json({error:'Mobile Number or PIN is incorrect.'});let popup=null;if(useDb){const q=await pool.query(`SELECT id,title,message,button_text AS "buttonText",button_url AS "buttonUrl",(image_data IS NOT NULL) AS "hasImage" FROM student_popups WHERE active=true AND BTRIM(message)<>'' ORDER BY updated_at DESC,id DESC LIMIT 1`);if(q.rowCount){popup={...q.rows[0],imageUrl:q.rows[0].hasImage?('/api/student-popup/'+q.rows[0].id+'/image'):null};delete popup.hasImage}}res.json({ok:true,student:studentPublic(s),popup})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/login',async(req,res)=>{try{const mobile=norm(req.body?.mobile),pin=String(req.body?.pin||'');if(!validMobile(mobile)||!validPin(pin))return res.status(400).json({error:'Enter 10-digit Mobile Number and 4-digit PIN.'});const s=await verifyStudent(mobile,pin,req.body?.instituteCode);if(!s)return res.status(401).json({error:'Mobile Number or PIN is incorrect.'});let popup=null;if(useDb){const q=await pool.query(`SELECT id,title,message,button_text AS "buttonText",button_url AS "buttonUrl",(image_data IS NOT NULL) AS "hasImage" FROM student_popups WHERE active=true AND BTRIM(message)<>'' ORDER BY updated_at DESC,id DESC LIMIT 1`);if(q.rowCount){popup={...q.rows[0],imageUrl:q.rows[0].hasImage?('/api/student-popup/'+q.rows[0].id+'/image'):null};delete popup.hasImage}}res.json({ok:true,student:studentPublic(s),popup})}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/student-popup/:id/image',async(req,res)=>{try{if(!useDb)return res.status(404).end();const q=await pool.query('SELECT image_data,image_mime FROM student_popups WHERE id=$1 AND active=true AND image_data IS NOT NULL',[req.params.id]);if(!q.rowCount)return res.status(404).end();res.type(q.rows[0].image_mime||'image/jpeg').send(q.rows[0].image_data)}catch(e){res.status(500).json({error:e.message})}});
-app.post('/api/forgot-pin',async(req,res)=>{try{const mobile=norm(req.body?.mobile);if(!validMobile(mobile))return res.status(400).json({error:'Enter a valid 10-digit Mobile Number.'});if(useDb){const s=await pool.query('SELECT id FROM students WHERE mobile=$1',[mobile]);if(!s.rowCount)return res.status(404).json({error:'Mobile Number is not registered.'});const p=await pool.query("SELECT id FROM pin_reset_requests WHERE mobile=$1 AND status='PENDING' LIMIT 1",[mobile]);if(!p.rowCount)await pool.query('INSERT INTO pin_reset_requests(student_id,mobile) VALUES($1,$2)',[s.rows[0].id,mobile]);return res.json({ok:true,message:'PIN reset request sent to Admin.'})}const students=readLocal('students.json'),s=students.find(x=>String(x.mobile)===mobile);if(!s)return res.status(404).json({error:'Mobile Number is not registered.'});const rr=readLocal('pin_reset_requests.json');if(!rr.some(x=>x.mobile===mobile&&x.status==='PENDING'))rr.push({id:Date.now(),studentId:s.id,mobile,status:'PENDING',requestedAt:new Date().toISOString()});writeLocal('pin_reset_requests.json',rr);res.json({ok:true,message:'PIN reset request sent to Admin.'})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/forgot-pin',async(req,res)=>{try{const mobile=norm(req.body?.mobile);if(!validMobile(mobile))return res.status(400).json({error:'Enter a valid 10-digit Mobile Number.'});if(useDb){const s=await pool.query('SELECT s.id FROM students s JOIN institutes i ON i.id=s.institute_id WHERE s.mobile=$1 AND UPPER(i.institute_code)=UPPER($2) AND i.status='active',[mobile,norm(req.body?.instituteCode).toUpperCase()]);if(!s.rowCount)return res.status(404).json({error:'Mobile Number is not registered.'});const p=await pool.query("SELECT id FROM pin_reset_requests WHERE mobile=$1 AND status='PENDING' LIMIT 1",[mobile]);if(!p.rowCount)await pool.query('INSERT INTO pin_reset_requests(student_id,mobile) VALUES($1,$2)',[s.rows[0].id,mobile]);return res.json({ok:true,message:'PIN reset request sent to Admin.'})}const students=readLocal('students.json'),s=students.find(x=>String(x.mobile)===mobile);if(!s)return res.status(404).json({error:'Mobile Number is not registered.'});const rr=readLocal('pin_reset_requests.json');if(!rr.some(x=>x.mobile===mobile&&x.status==='PENDING'))rr.push({id:Date.now(),studentId:s.id,mobile,status:'PENDING',requestedAt:new Date().toISOString()});writeLocal('pin_reset_requests.json',rr);res.json({ok:true,message:'PIN reset request sent to Admin.'})}catch(e){res.status(500).json({error:e.message})}});
 
 app.post('/api/exams/available',async(req,res)=>{try{const student=await verifyStudent(norm(req.body?.mobile),String(req.body?.pin||''),req.body?.instituteCode);if(!student)return res.status(401).json({error:'Invalid login.'});if(!useDb)return res.json([]);const q=await pool.query(`SELECT e.*,(SELECT COUNT(*)::int FROM questions q WHERE q.exam_id=e.id) question_count,(SELECT COUNT(*)::int FROM results r WHERE r.exam_id=e.id AND r.student_id=$1) attempts_used FROM exams e WHERE e.active=true AND e.institute_id=$2 ORDER BY CASE WHEN e.start_at IS NULL THEN 1 ELSE 0 END,e.start_at ASC,e.id DESC`,[student.id,student.institute_id]);res.json(q.rows.map(r=>{const e=examPublic(r);return{...e,status:nowStatus(e),questionCount:Number(r.question_count),attemptsUsed:Number(r.attempts_used),attemptsRemaining:e.attemptLimit===0?null:Math.max(0,e.attemptLimit-Number(r.attempts_used))}}))}catch(e){res.status(500).json({error:e.message})}});
 

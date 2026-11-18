@@ -237,9 +237,9 @@ const pc=await pool.query('SELECT COUNT(*)::int n FROM promotions');if(!pc.rows[
 ('CIE Online Contest','Learn • Compete • Grow','Participate in online tests through the CIE Exam App and view your result instantly.','View Exams','#upcoming-exams',2),
 ('Institute / Franchise Promotion','Grow with CIE','Use this promotion area for CIE announcements, admissions, contests and institute promotions.','','',3)`)}
 
-const ex=await pool.query('SELECT id FROM exams ORDER BY id LIMIT 1');
+const ex=await pool.query("SELECT id FROM exams WHERE institute_id=(SELECT id FROM institutes WHERE institute_code='CIE0001') ORDER BY id LIMIT 1");
 let legacyId;
-if(!ex.rowCount){legacyId=(await pool.query(`INSERT INTO exams(name,timer_mode,passing_percentage,attempt_limit,active) VALUES('Legacy / General Exam','none',40,0,true) RETURNING id`)).rows[0].id}else legacyId=ex.rows[0].id;
+if(!ex.rowCount){legacyId=(await pool.query(`INSERT INTO exams(institute_id,name,timer_mode,passing_percentage,attempt_limit,active) VALUES((SELECT id FROM institutes WHERE institute_code='CIE0001'),'Legacy / General Exam','none',40,0,true) RETURNING id`)).rows[0].id}else legacyId=ex.rows[0].id;
 await pool.query('UPDATE questions SET exam_id=$1 WHERE exam_id IS NULL',[legacyId]);
 // Apply the versioned, transactional tenant-integrity migration after the legacy schema exists.
 const tenantMigrationPath=path.join(__dirname,'backend','migrations','003_complete_tenant_integrity.sql');

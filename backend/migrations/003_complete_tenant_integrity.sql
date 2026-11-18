@@ -91,7 +91,7 @@ BEGIN
 END $$;
 
 -- Legacy CIE admin/public content remains assigned to CIE unless a tenant is explicitly set.
-CREATE OR REPLACE FUNCTION cie_default_tenant_before_write() RETURNS trigger LANGUAGE plpgsql AS $
+CREATE OR REPLACE FUNCTION cie_default_tenant_before_write() RETURNS trigger LANGUAGE plpgsql AS $cie$
 DECLARE cie_id BIGINT; derived_id BIGINT;
 BEGIN
  SELECT id INTO cie_id FROM institutes WHERE institute_code='CIE0001';
@@ -106,7 +106,7 @@ BEGIN
    NEW.institute_id:=COALESCE(derived_id,cie_id);
  END IF;
  RETURN NEW;
-END $;
+END $cie$;
 DROP TRIGGER IF EXISTS exams_default_tenant ON exams;
 CREATE TRIGGER exams_default_tenant BEFORE INSERT OR UPDATE OF institute_id ON exams FOR EACH ROW EXECUTE FUNCTION cie_default_tenant_before_write();
 DROP TRIGGER IF EXISTS questions_default_tenant ON questions;

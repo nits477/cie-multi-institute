@@ -15,7 +15,7 @@ BEGIN
    id BIGSERIAL PRIMARY KEY,institute_id BIGINT NOT NULL REFERENCES institutes(id) ON DELETE CASCADE,
    course_name TEXT NOT NULL,course_code TEXT NOT NULL,description TEXT,
    is_active BOOLEAN NOT NULL DEFAULT TRUE,created_at TIMESTAMPTZ DEFAULT NOW(),
-   UNIQUE(institute_id,course_code)
+   UNIQUE(institute_id,course_code),UNIQUE(id,institute_id)
  );
  CREATE TABLE IF NOT EXISTS subjects(
    id BIGSERIAL PRIMARY KEY,institute_id BIGINT NOT NULL REFERENCES institutes(id) ON DELETE CASCADE,

@@ -23,31 +23,35 @@ BEGIN
  -- Derive ownership from the actual student/exam/paper relationship wherever possible.
  IF to_regclass('question_reports') IS NOT NULL THEN
    UPDATE question_reports q SET institute_id=s.institute_id FROM students s
-     WHERE q.student_id=s.id AND q.institute_id IS NULL;
+     WHERE q.student_id=s.id;
    UPDATE question_reports q SET institute_id=e.institute_id FROM exams e
-     WHERE q.exam_id=e.id AND q.institute_id IS NULL;
+     WHERE q.exam_id=e.id;
  END IF;
  IF to_regclass('pin_reset_requests') IS NOT NULL THEN
    UPDATE pin_reset_requests p SET institute_id=s.institute_id FROM students s
-     WHERE p.student_id=s.id AND p.institute_id IS NULL;
+     WHERE p.student_id=s.id;
  END IF;
  IF to_regclass('wallet_transactions') IS NOT NULL THEN
    UPDATE wallet_transactions w SET institute_id=s.institute_id FROM students s
-     WHERE w.student_id=s.id AND w.institute_id IS NULL;
+     WHERE w.student_id=s.id;
  END IF;
  IF to_regclass('referrals') IS NOT NULL THEN
    UPDATE referrals r SET institute_id=s.institute_id FROM students s
-     WHERE r.referrer_id=s.id AND r.institute_id IS NULL;
+     WHERE r.referrer_id=s.id;
  END IF;
  IF to_regclass('old_papers') IS NOT NULL THEN
    UPDATE old_papers p SET institute_id=c.institute_id FROM old_paper_categories c
-     WHERE p.category_id=c.id AND p.institute_id IS NULL;
+     WHERE p.category_id=c.id;
  END IF;
  IF to_regclass('old_paper_orders') IS NOT NULL THEN
    UPDATE old_paper_orders o SET institute_id=p.institute_id FROM old_papers p
-     WHERE o.paper_id=p.id AND o.institute_id IS NULL;
+     WHERE o.paper_id=p.id;
  END IF;
 
+ -- Core dependent records may have inherited the old default CIE tenant in an earlier run.
+ -- Re-derive them from their owning student/paper on every idempotent run.
+ UPDATE exam_sessions x SET institute_id=s.institute_id FROM students s WHERE x.student_id=s.id;
+ UPDATE results x SET institute_id=s.institute_id FROM students s WHERE x.student_id=s.id;
  -- Remaining historical/global content belongs to the legacy CIE tenant.
  FOREACH t IN ARRAY ARRAY[
    'question_reports','pin_reset_requests','wallet_transactions','referrals',

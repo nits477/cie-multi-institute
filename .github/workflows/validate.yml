@@ -4,6 +4,9 @@ on:
     branches: [work/multi-institute-tenant]
   pull_request:
     branches: [work/multi-institute-tenant]
+concurrency:
+  group: cie-tenant-validation-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   node-check:
     runs-on: ubuntu-latest

@@ -1,6 +1,7 @@
 const {Pool}=require('pg');
+const fs=require('node:fs');
 const assert=require('node:assert/strict');
-const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.PGSSLMODE==='disable'?false:{rejectUnauthorized:false}});
+const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.PGSSLMODE==='require'?{rejectUnauthorized:false}:false});
 const uid=Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 async function expectFkFailure(client,name,sql,params){
  await client.query('SAVEPOINT '+name);
@@ -12,8 +13,11 @@ async function expectFkFailure(client,name,sql,params){
 (async()=>{
  const c=await pool.connect();
  try{
+  await c.query(fs.readFileSync('backend/migrations/003_complete_tenant_integrity.sql','utf8'));
   await c.query('BEGIN');
   const cie=(await c.query("SELECT id FROM institutes WHERE institute_code='CIE0001'")).rows[0].id;
+  const adminRole=(await c.query("INSERT INTO admins(admin_id,password_hash) VALUES($1,'test-hash') RETURNING role",['TEST'+uid])).rows[0].role;
+  assert.equal(adminRole,'super_admin','Legacy admin role must be explicitly Master Admin');
   const legacyExam=(await c.query("INSERT INTO exams(name,active) VALUES($1,true) RETURNING id,institute_id",['Legacy test '+uid])).rows[0];
   assert.equal(Number(legacyExam.institute_id),Number(cie),'Legacy exam insert must default to CIE tenant');
   const legacyQuestion=(await c.query("INSERT INTO questions(question,option_a,option_b,option_c,option_d,answer,exam_id) VALUES('Q','A','B','C','D','A',$1) RETURNING institute_id",[legacyExam.id])).rows[0];

@@ -16,3 +16,4 @@ jobs:
       - run: npm ci
       - run: node --check server.js
       - run: node --check public/app.js
+      - run: node scripts/check-inline-js.js

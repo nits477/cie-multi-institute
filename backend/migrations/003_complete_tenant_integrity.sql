@@ -96,12 +96,12 @@ DECLARE cie_id BIGINT; derived_id BIGINT;
 BEGIN
  SELECT id INTO cie_id FROM institutes WHERE institute_code='CIE0001';
  IF NEW.institute_id IS NULL THEN
-   IF TG_TABLE_NAME='questions' AND NEW.exam_id IS NOT NULL THEN
-     SELECT institute_id INTO derived_id FROM exams WHERE id=NEW.exam_id;
-   ELSIF TG_TABLE_NAME='old_papers' AND NEW.category_id IS NOT NULL THEN
-     SELECT institute_id INTO derived_id FROM old_paper_categories WHERE id=NEW.category_id;
-   ELSIF TG_TABLE_NAME='old_paper_orders' AND NEW.paper_id IS NOT NULL THEN
-     SELECT institute_id INTO derived_id FROM old_papers WHERE id=NEW.paper_id;
+   IF TG_TABLE_NAME='questions' THEN
+     IF NEW.exam_id IS NOT NULL THEN SELECT institute_id INTO derived_id FROM exams WHERE id=NEW.exam_id; END IF;
+   ELSIF TG_TABLE_NAME='old_papers' THEN
+     IF NEW.category_id IS NOT NULL THEN SELECT institute_id INTO derived_id FROM old_paper_categories WHERE id=NEW.category_id; END IF;
+   ELSIF TG_TABLE_NAME='old_paper_orders' THEN
+     IF NEW.paper_id IS NOT NULL THEN SELECT institute_id INTO derived_id FROM old_papers WHERE id=NEW.paper_id; END IF;
    END IF;
    NEW.institute_id:=COALESCE(derived_id,cie_id);
  END IF;

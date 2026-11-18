@@ -90,6 +90,32 @@ BEGIN
  EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
+-- Legacy CIE admin/public content remains assigned to CIE unless a tenant is explicitly set.
+CREATE OR REPLACE FUNCTION cie_default_tenant_before_write() RETURNS trigger LANGUAGE plpgsql AS $
+DECLARE cie_id BIGINT; derived_id BIGINT;
+BEGIN
+ SELECT id INTO cie_id FROM institutes WHERE institute_code='CIE0001';
+ IF NEW.institute_id IS NULL THEN
+   IF TG_TABLE_NAME='old_papers' AND NEW.category_id IS NOT NULL THEN
+     SELECT institute_id INTO derived_id FROM old_paper_categories WHERE id=NEW.category_id;
+   ELSIF TG_TABLE_NAME='old_paper_orders' AND NEW.paper_id IS NOT NULL THEN
+     SELECT institute_id INTO derived_id FROM old_papers WHERE id=NEW.paper_id;
+   END IF;
+   NEW.institute_id:=COALESCE(derived_id,cie_id);
+ END IF;
+ RETURN NEW;
+END $;
+DROP TRIGGER IF EXISTS promotions_default_tenant ON promotions;
+CREATE TRIGGER promotions_default_tenant BEFORE INSERT OR UPDATE OF institute_id ON promotions FOR EACH ROW EXECUTE FUNCTION cie_default_tenant_before_write();
+DROP TRIGGER IF EXISTS student_popups_default_tenant ON student_popups;
+CREATE TRIGGER student_popups_default_tenant BEFORE INSERT OR UPDATE OF institute_id ON student_popups FOR EACH ROW EXECUTE FUNCTION cie_default_tenant_before_write();
+DROP TRIGGER IF EXISTS old_paper_categories_default_tenant ON old_paper_categories;
+CREATE TRIGGER old_paper_categories_default_tenant BEFORE INSERT OR UPDATE OF institute_id ON old_paper_categories FOR EACH ROW EXECUTE FUNCTION cie_default_tenant_before_write();
+DROP TRIGGER IF EXISTS old_papers_default_tenant ON old_papers;
+CREATE TRIGGER old_papers_default_tenant BEFORE INSERT OR UPDATE OF institute_id ON old_papers FOR EACH ROW EXECUTE FUNCTION cie_default_tenant_before_write();
+DROP TRIGGER IF EXISTS old_paper_orders_default_tenant ON old_paper_orders;
+CREATE TRIGGER old_paper_orders_default_tenant BEFORE INSERT OR UPDATE OF institute_id ON old_paper_orders FOR EACH ROW EXECUTE FUNCTION cie_default_tenant_before_write();
+
 -- Composite keys allow the database to reject cross-institute relationships.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_students_id_institute ON students(id,institute_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_exams_id_institute ON exams(id,institute_id);

@@ -82,6 +82,37 @@ app.patch('/api/institute-admin/students/:id/status',auth('institute_admin'),asy
  if(!r.rowCount)return res.status(404).json({message:'Student not found.'});
  res.json({message:'Student status updated.',student:r.rows[0]});
 }));
+
+// Student identity is scoped by Institute Code + mobile. PIN is stored only as a bcrypt hash.
+app.post('/api/student/register',asyncRoute(async(req,res)=>{
+ const b=req.body||{},code=clean(b.instituteCode).toUpperCase(),name=clean(b.fullName),father=clean(b.fatherName),mobile=clean(b.mobile),pin=String(b.pin||'');
+ if(!/^[A-Z0-9-]{3,20}$/.test(code)||!name||!/^\\d{10}$/.test(mobile)||!/^\\d{4}$/.test(pin))
+  return res.status(400).json({message:'Institute Code, student name, 10-digit mobile and 4-digit PIN are required.'});
+ const ir=await pool.query("SELECT id,institute_name FROM institutes WHERE UPPER(institute_code)=UPPER($1) AND status='approved'",[code]);
+ if(!ir.rowCount)return res.status(404).json({message:'Institute Code not found or institute is not approved.'});
+ const institute=ir.rows[0],hash=await bcrypt.hash(pin,12);
+ try{
+  const r=await pool.query("INSERT INTO students(institute_id,full_name,father_name,mobile,password_hash,status) VALUES($1,$2,$3,$4,$5,'active') RETURNING id,full_name,mobile,institute_id,status",[institute.id,name,father||null,mobile,hash]);
+  const student={id:r.rows[0].id,full_name:r.rows[0].full_name,mobile:r.rows[0].mobile,role:'student',institute_id:institute.id,institute_name:institute.institute_name};
+  res.status(201).json({message:'Student registered successfully.',token:tokenFor(student),student});
+ }catch(e){if(e.code==='23505')return res.status(409).json({message:'This mobile number is already registered in this institute.'});throw e;}
+}));
+app.post('/api/student/login',asyncRoute(async(req,res)=>{
+ const code=clean(req.body?.instituteCode).toUpperCase(),mobile=clean(req.body?.mobile),pin=String(req.body?.pin||'');
+ if(!/^[A-Z0-9-]{3,20}$/.test(code)||!/^\\d{10}$/.test(mobile)||!/^\\d{4}$/.test(pin))
+  return res.status(400).json({message:'Enter Institute Code, 10-digit mobile and 4-digit PIN.'});
+ const r=await pool.query("SELECT s.id,s.full_name,s.mobile,s.password_hash,s.institute_id,i.institute_name FROM students s JOIN institutes i ON i.id=s.institute_id WHERE UPPER(i.institute_code)=UPPER($1) AND s.mobile=$2 AND s.status='active' AND i.status='approved'",[code,mobile]);
+ const u=r.rows[0];
+ if(!u||!(await bcrypt.compare(pin,u.password_hash)))return res.status(401).json({message:'Institute Code, mobile number or PIN is incorrect.'});
+ const student={id:u.id,full_name:u.full_name,mobile:u.mobile,role:'student',institute_id:u.institute_id,institute_name:u.institute_name};
+ res.json({message:'Login successful.',token:tokenFor(student),student});
+}));
+app.get('/api/student/me',auth('student'),asyncRoute(async(req,res)=>{
+ const r=await pool.query("SELECT s.id,s.full_name,s.father_name,s.mobile,s.email,s.admission_number,s.class_or_course,s.status,i.institute_code,i.institute_name FROM students s JOIN institutes i ON i.id=s.institute_id WHERE s.id=$1 AND s.institute_id=$2 AND s.status='active' AND i.status='approved'",[req.user.sub,req.user.instituteId]);
+ if(!r.rowCount)return res.status(404).json({message:'Student account not found or inactive.'});
+ res.json(r.rows[0]);
+}));
+
 app.get('/api/super-admin/overview',auth('super_admin'),asyncRoute(async(_req,res)=>{
  const [institutes,apps,admins,students,exams]=await Promise.all([
  pool.query("SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status='approved')::int approved,COUNT(*) FILTER(WHERE status='pending')::int pending FROM institutes"),

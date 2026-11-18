@@ -10,6 +10,25 @@ BEGIN
  SELECT id INTO cie_id FROM institutes WHERE institute_code='CIE0001';
  IF cie_id IS NULL THEN RAISE EXCEPTION 'CIE0001 default institute is missing'; END IF;
 
+ -- Institute-owned academic catalogue and exam links.
+ CREATE TABLE IF NOT EXISTS courses(
+   id BIGSERIAL PRIMARY KEY,institute_id BIGINT NOT NULL REFERENCES institutes(id) ON DELETE CASCADE,
+   course_name TEXT NOT NULL,course_code TEXT NOT NULL,description TEXT,
+   is_active BOOLEAN NOT NULL DEFAULT TRUE,created_at TIMESTAMPTZ DEFAULT NOW(),
+   UNIQUE(institute_id,course_code)
+ );
+ CREATE TABLE IF NOT EXISTS subjects(
+   id BIGSERIAL PRIMARY KEY,institute_id BIGINT NOT NULL REFERENCES institutes(id) ON DELETE CASCADE,
+   course_id BIGINT NOT NULL,subject_name TEXT NOT NULL,subject_code TEXT,
+   is_active BOOLEAN NOT NULL DEFAULT TRUE,created_at TIMESTAMPTZ DEFAULT NOW(),
+   UNIQUE(id,institute_id),
+   FOREIGN KEY(course_id,institute_id) REFERENCES courses(id,institute_id) ON DELETE CASCADE
+ );
+ ALTER TABLE exams ADD COLUMN IF NOT EXISTS course_id BIGINT;
+ ALTER TABLE exams ADD COLUMN IF NOT EXISTS subject_id BIGINT;
+ CREATE UNIQUE INDEX IF NOT EXISTS uq_courses_id_institute ON courses(id,institute_id);
+ CREATE INDEX IF NOT EXISTS idx_courses_institute_active ON courses(institute_id,is_active);
+ CREATE INDEX IF NOT EXISTS idx_subjects_course_active ON subjects(institute_id,course_id,is_active);
  -- Tenant-owned tables that were omitted from the first foundation.
  FOREACH t IN ARRAY ARRAY[
    'question_reports','pin_reset_requests','wallet_transactions','referrals',
@@ -80,6 +99,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_old_papers_id_institute ON old_papers(id,in
 
 DO $$
 BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='subjects_course_tenant_fk') THEN
+  ALTER TABLE subjects ADD CONSTRAINT subjects_course_tenant_fk FOREIGN KEY(course_id,institute_id) REFERENCES courses(id,institute_id) NOT VALID;
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='exams_course_tenant_fk') THEN
+  ALTER TABLE exams ADD CONSTRAINT exams_course_tenant_fk FOREIGN KEY(course_id,institute_id) REFERENCES courses(id,institute_id) NOT VALID;
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='exams_subject_tenant_fk') THEN
+  ALTER TABLE exams ADD CONSTRAINT exams_subject_tenant_fk FOREIGN KEY(subject_id,institute_id) REFERENCES subjects(id,institute_id) NOT VALID;
+ END IF;
  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='exam_sessions_student_tenant_fk') THEN
   ALTER TABLE exam_sessions ADD CONSTRAINT exam_sessions_student_tenant_fk FOREIGN KEY(student_id,institute_id) REFERENCES students(id,institute_id) NOT VALID;
  END IF;
@@ -122,6 +150,9 @@ BEGIN
 END $$;
 
 -- Fail the migration if any legacy rows violate tenant relationships.
+ALTER TABLE subjects VALIDATE CONSTRAINT subjects_course_tenant_fk;
+ALTER TABLE exams VALIDATE CONSTRAINT exams_course_tenant_fk;
+ALTER TABLE exams VALIDATE CONSTRAINT exams_subject_tenant_fk;
 ALTER TABLE exam_sessions VALIDATE CONSTRAINT exam_sessions_student_tenant_fk;
 ALTER TABLE exam_sessions VALIDATE CONSTRAINT exam_sessions_exam_tenant_fk;
 ALTER TABLE results VALIDATE CONSTRAINT results_student_tenant_fk;

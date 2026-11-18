@@ -241,6 +241,10 @@ const ex=await pool.query('SELECT id FROM exams ORDER BY id LIMIT 1');
 let legacyId;
 if(!ex.rowCount){legacyId=(await pool.query(`INSERT INTO exams(name,timer_mode,passing_percentage,attempt_limit,active) VALUES('Legacy / General Exam','none',40,0,true) RETURNING id`)).rows[0].id}else legacyId=ex.rows[0].id;
 await pool.query('UPDATE questions SET exam_id=$1 WHERE exam_id IS NULL',[legacyId]);
+// Apply the versioned, transactional tenant-integrity migration after the legacy schema exists.
+const tenantMigrationPath=path.join(__dirname,'backend','migrations','003_complete_tenant_integrity.sql');
+if(!fs.existsSync(tenantMigrationPath))throw new Error('Required tenant migration file is missing.');
+await pool.query(fs.readFileSync(tenantMigrationPath,'utf8'));
 }
 
 app.use(cors());app.use(express.json({limit:'3mb'}));

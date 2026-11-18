@@ -19,7 +19,11 @@ async function expectFkFailure(client,name,sql,params){
   const sa=(await c.query('INSERT INTO students(name,father_name,mobile,institute_id) VALUES($1,$2,$3,$4) RETURNING id',['Student A','Father',mobile,a])).rows[0].id;
   const sb=(await c.query('INSERT INTO students(name,father_name,mobile,institute_id) VALUES($1,$2,$3,$4) RETURNING id',['Student B','Father',mobile,b])).rows[0].id;
   await expectFkFailure(c,'dup_mobile_a','INSERT INTO students(name,father_name,mobile,institute_id) VALUES($1,$2,$3,$4)',['Duplicate','Father',mobile,a]);
-  const ea=(await c.query("INSERT INTO exams(name,institute_id,active) VALUES('Exam A',$1,true) RETURNING id",[a])).rows[0].id;
+  const caCourse=(await c.query("INSERT INTO courses(institute_id,course_name,course_code) VALUES($1,'Course A',$2) RETURNING id",[a,'CA'+uid])).rows[0].id;
+  const cbCourse=(await c.query("INSERT INTO courses(institute_id,course_name,course_code) VALUES($1,'Course B',$2) RETURNING id",[b,'CB'+uid])).rows[0].id;
+  const subject=(await c.query("INSERT INTO subjects(institute_id,course_id,subject_name) VALUES($1,$2,'Subject A') RETURNING id",[a,caCourse])).rows[0].id;
+  await expectFkFailure(c,'cross_subject_course','INSERT INTO subjects(institute_id,course_id,subject_name) VALUES($1,$2,$3)',[a,cbCourse,'Bad Subject']);
+  const ea=(await c.query("INSERT INTO exams(name,institute_id,course_id,subject_id,active) VALUES('Exam A',$1,$2,$3,true) RETURNING id",[a,caCourse,subject])).rows[0].id;
   const eb=(await c.query("INSERT INTO exams(name,institute_id,active) VALUES('Exam B',$1,true) RETURNING id",[b])).rows[0].id;
   const qa=(await c.query("INSERT INTO questions(question,option_a,option_b,option_c,option_d,answer,exam_id,institute_id) VALUES('Q?','A','B','C','D','A',$1,$2) RETURNING id",[ea,a])).rows[0].id;
   await c.query("INSERT INTO exam_sessions(token,student_id,exam_id,question_ids,institute_id) VALUES($1,$2,$3,'[]'::jsonb,$4)",['tokA'+uid,sa,ea,a]);

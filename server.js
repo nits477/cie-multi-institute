@@ -336,6 +336,16 @@ app.get('/api/public/promotions',async(req,res)=>{try{if(!useDb)return res.json(
 function signInstituteAdminToken(admin){const payload=Buffer.from(JSON.stringify({adminId:admin.admin_id,role:'institute_admin',instituteId:Number(admin.institute_id),exp:Date.now()+SESSION_TTL_MS})).toString('base64url');const sig=crypto.createHmac('sha256',SESSION_SECRET).update(payload).digest('base64url');return payload+'.'+sig}
 function setInstituteAdminCookie(res,admin){res.cookie(ADMIN_COOKIE,signInstituteAdminToken(admin),{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'lax',maxAge:SESSION_TTL_MS,path:'/'})}
 function requireSuperAdmin(req,res,next){const a=currentAdmin(req);if(!a||a.role!=='super_admin')return res.status(403).json({error:'Master Admin permission required.'});req.admin=a;next()}
+app.post('/api/master/institutes/:id/admin',requireSuperAdmin,async(req,res)=>{try{
+ if(!useDb)return res.status(503).json({error:'Database required.'});
+ const instituteId=Number(req.params.id),adminId=norm(req.body?.adminId),fullName=norm(req.body?.fullName),email=norm(req.body?.email).toLowerCase(),password=String(req.body?.password||'');
+ if(!Number.isInteger(instituteId)||instituteId<1||!adminId||!fullName||password.length<8)return res.status(400).json({error:'Institute ID, Admin ID, full name and password (minimum 8 characters) are required.'});
+ const ir=await pool.query("SELECT id FROM institutes WHERE id=$1 AND status='active'",[instituteId]);
+ if(!ir.rowCount)return res.status(404).json({error:'Active institute not found.'});
+ const hash=await bcrypt.hash(password,12);
+ const q=await pool.query('INSERT INTO institute_admins(institute_id,admin_id,full_name,email,password_hash) VALUES($1,$2,$3,$4,$5) RETURNING id,institute_id,admin_id,full_name,email,is_active',[instituteId,adminId,fullName,email||null,hash]);
+ res.status(201).json({ok:true,admin:q.rows[0]});
+}catch(e){if(e.code==='23505')return res.status(409).json({error:'Admin ID is already in use.'});res.status(500).json({error:e.message})}});
 app.post('/api/institute-admin/auth/login',async(req,res)=>{try{
  if(!useDb)return res.status(503).json({error:'Database required.'});
  const code=norm(req.body?.instituteCode).toUpperCase(),adminId=norm(req.body?.adminId),password=String(req.body?.password||'');

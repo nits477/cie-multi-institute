@@ -13,6 +13,15 @@ async function expectFkFailure(client,name,sql,params){
  const c=await pool.connect();
  try{
   await c.query('BEGIN');
+  const cie=(await c.query("SELECT id FROM institutes WHERE institute_code='CIE0001'")).rows[0].id;
+  const legacyExam=(await c.query("INSERT INTO exams(name,active) VALUES($1,true) RETURNING id,institute_id",['Legacy test '+uid])).rows[0];
+  assert.equal(Number(legacyExam.institute_id),Number(cie),'Legacy exam insert must default to CIE tenant');
+  const legacyQuestion=(await c.query("INSERT INTO questions(question,option_a,option_b,option_c,option_d,answer,exam_id) VALUES('Q','A','B','C','D','A',$1) RETURNING institute_id",[legacyExam.id])).rows[0];
+  assert.equal(Number(legacyQuestion.institute_id),Number(cie),'Legacy question tenant must derive from its exam');
+  const legacyCategory=(await c.query("INSERT INTO old_paper_categories(name) VALUES($1) RETURNING id,institute_id",['legacycat'+uid])).rows[0];
+  assert.equal(Number(legacyCategory.institute_id),Number(cie),'Legacy paper category must default to CIE tenant');
+  const legacyPaper=(await c.query("INSERT INTO old_papers(category_id,title,pdf_data,file_name) VALUES($1,'Legacy Paper',decode('00','hex'),'legacy.pdf') RETURNING id,institute_id",[legacyCategory.id])).rows[0];
+  assert.equal(Number(legacyPaper.institute_id),Number(cie),'Legacy paper tenant must derive from its category');
   const a=(await c.query("INSERT INTO institutes(institute_code,institute_name,status) VALUES($1,$2,'active') RETURNING id",['TSTA'+uid,'Tenant Test A'])).rows[0].id;
   const b=(await c.query("INSERT INTO institutes(institute_code,institute_name,status) VALUES($1,$2,'active') RETURNING id",['TSTB'+uid,'Tenant Test B'])).rows[0].id;
   const mobile='98'+uid.replace(/[^0-9]/g,'').padEnd(8,'1').slice(0,8);

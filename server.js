@@ -59,7 +59,11 @@ function currentAdmin(req){return verifyAdminToken(parseCookies(req)[ADMIN_COOKI
 async function requireAdmin(req,res,next){try{const a=currentAdmin(req);if(!a||a.role!=='super_admin')return res.status(403).json({error:'Master Admin permission required.'});const q=await pool.query('SELECT admin_id FROM admins WHERE admin_id=$1 AND active=true',[a.adminId]);if(!q.rowCount)return res.status(401).json({error:'Admin account inactive.'});req.admin=a;next()}catch(e){res.status(500).json({error:'Could not verify admin permissions.'})}}
 async function sendAdminResetEmail(to,resetUrl){const key=process.env.RESEND_API_KEY||'';const from=process.env.ADMIN_FROM_EMAIL||'CIE Exam <onboarding@resend.dev>';if(!key)throw new Error('Email recovery is not configured yet. Add RESEND_API_KEY in Render Environment.');const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({from,to,subject:'CIE Exam Admin Password Reset',html:`<p>A password reset was requested for the CIE Exam Admin Portal.</p><p><a href="${resetUrl}">Reset Admin Password</a></p><p>This link expires in 20 minutes. If you did not request this, ignore this email.</p>`})});if(!r.ok){const t=await r.text();throw new Error('Could not send reset email: '+t)}}
 
-async function initDb(){if(!useDb)return;await pool.query(`
+async function initDb(){
+if(useDb){
+ const databaseName=decodeURIComponent(new URL(DATABASE_URL).pathname.replace(/^\\//,''));
+ if(!['cie_multi_institute_demo_db','cie_test'].includes(databaseName))throw new Error('Safety stop: CIE Multi-Institute migrations are allowed only on cie_multi_institute_demo_db or the disposable cie_test database. Production databases are blocked.');
+}if(!useDb)return;await pool.query(`
 CREATE TABLE IF NOT EXISTS institutes(id BIGSERIAL PRIMARY KEY,institute_code TEXT NOT NULL UNIQUE,institute_name TEXT NOT NULL,email TEXT,phone TEXT,address TEXT,state TEXT,district TEXT,status TEXT NOT NULL DEFAULT 'active',created_at TIMESTAMPTZ DEFAULT NOW());
 ALTER TABLE institutes ADD COLUMN IF NOT EXISTS approved_by TEXT;
 ALTER TABLE institutes ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;

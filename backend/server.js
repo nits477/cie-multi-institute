@@ -138,6 +138,30 @@ app.post('/api/super-admin/applications/:id/decision',auth('super_admin'),asyncR
  }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
 }));
 app.get('/api/institutes',auth('super_admin'),asyncRoute(async(_req,res)=>{const r=await pool.query("SELECT i.id,i.institute_code,i.institute_name,i.email,i.phone,i.state,i.district,i.status,i.created_at,(SELECT COUNT(*) FROM students s WHERE s.institute_id=i.id)::int student_count FROM institutes i ORDER BY i.created_at DESC");res.json(r.rows);}));
+
+app.get('/api/super-admin/admins',auth('super_admin'),asyncRoute(async(_req,res)=>{
+ const r=await pool.query("SELECT a.id,a.institute_id,a.full_name,a.email,a.phone,a.role,a.is_active,a.created_at,i.institute_name,i.institute_code FROM institute_admins a JOIN institutes i ON i.id=a.institute_id ORDER BY i.institute_name,a.full_name");
+ res.json(r.rows);
+}));
+app.put('/api/super-admin/admins/:id',auth('super_admin'),asyncRoute(async(req,res)=>{
+ const id=Number(req.params.id),fullName=clean(req.body?.fullName),email=clean(req.body?.email).toLowerCase(),phone=clean(req.body?.phone);
+ if(!Number.isSafeInteger(id)||id<1||!fullName||!/^\S+@\S+\.\S+$/.test(email)||!phone) return res.status(400).json({message:'Valid name, email and mobile number are required.'});
+ const exists=await pool.query('SELECT 1 FROM institute_admins WHERE LOWER(email)=LOWER($1) AND id<>$2',[email,id]);
+ if(exists.rowCount) return res.status(409).json({message:'This email is already assigned to another Institute Admin.'});
+ const r=await pool.query('UPDATE institute_admins SET full_name=$1,email=$2,phone=$3,updated_at=NOW() WHERE id=$4 RETURNING id,institute_id,full_name,email,phone,role,is_active,created_at',[fullName,email,phone,id]);
+ if(!r.rowCount)return res.status(404).json({message:'Institute Admin not found.'});
+ await pool.query("INSERT INTO audit_logs(institute_id,actor_type,actor_id,action,entity_type,entity_id,details) VALUES($1,'super_admin',$2,'institute_admin_updated','institute_admin',$3,$4::jsonb)",[r.rows[0].institute_id,req.user.sub,id,JSON.stringify({fullName,email,phone})]);
+ res.json({message:'Institute Admin details updated successfully.',admin:r.rows[0]});
+}));
+app.patch('/api/super-admin/admins/:id/status',auth('super_admin'),asyncRoute(async(req,res)=>{
+ const id=Number(req.params.id),isActive=req.body?.isActive;
+ if(!Number.isSafeInteger(id)||id<1||typeof isActive!=='boolean')return res.status(400).json({message:'A valid admin ID and active status are required.'});
+ const r=await pool.query('UPDATE institute_admins SET is_active=$1,updated_at=NOW() WHERE id=$2 RETURNING id,institute_id,full_name,email,is_active',[isActive,id]);
+ if(!r.rowCount)return res.status(404).json({message:'Institute Admin not found.'});
+ await pool.query("INSERT INTO audit_logs(institute_id,actor_type,actor_id,action,entity_type,entity_id,details) VALUES($1,'super_admin',$2,'institute_admin_status_changed','institute_admin',$3,$4::jsonb)",[r.rows[0].institute_id,req.user.sub,id,JSON.stringify({isActive})]);
+ res.json({message:isActive?'Institute Admin activated.':'Institute Admin deactivated.',admin:r.rows[0]});
+}));
+
 app.use('/api',(req,res)=>res.status(404).json({message:'API route not found'}));
 app.use((err,_req,res,_next)=>{console.error(err);res.status(500).json({message:'Server error. Please try again.'});});
 app.listen(port,()=>console.log('CIE Multi-Institute listening on '+port));

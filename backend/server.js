@@ -164,4 +164,19 @@ app.patch('/api/super-admin/admins/:id/status',auth('super_admin'),asyncRoute(as
 
 app.use('/api',(req,res)=>res.status(404).json({message:'API route not found'}));
 app.use((err,_req,res,_next)=>{console.error(err);res.status(500).json({message:'Server error. Please try again.'});});
-app.listen(port,()=>console.log('CIE Multi-Institute listening on '+port));
+// Ensure the new Multi-Institute Super Admin store exists before serving login requests.
+async function ensureSuperAdminStore(){
+ await pool.query(`CREATE TABLE IF NOT EXISTS super_admins (
+   id BIGSERIAL PRIMARY KEY,
+   full_name TEXT NOT NULL,
+   email TEXT NOT NULL,
+   password_hash TEXT NOT NULL,
+   is_active BOOLEAN NOT NULL DEFAULT TRUE,
+   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+ )`);
+ await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS uq_super_admins_email_lower ON super_admins(LOWER(email))');
+}
+ensureSuperAdminStore()
+ .then(()=>app.listen(port,()=>console.log('CIE Multi-Institute listening on '+port+' (Super Admin store ready)')))
+ .catch(err=>{console.error('Database startup/migration failed:',err);process.exit(1);});

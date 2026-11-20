@@ -3,7 +3,7 @@ on:
   push:
     branches: [work/school-erp-platform]
   pull_request:
-    branches: [work/school-erp-platform]
+    branches: [main]
 concurrency:
   group: school-erp-validation-${{ github.ref }}
   cancel-in-progress: true

@@ -38,6 +38,8 @@ jobs:
         working-directory: school-erp
       - run: npm run check
         working-directory: school-erp
+      - run: node scripts/check-inline-js.js
+        working-directory: school-erp
       - name: Start service and apply isolated migrations
         run: |
           node server.js > /tmp/school-erp.log 2>&1 &

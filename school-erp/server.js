@@ -12,12 +12,13 @@ const app = express();
 const PORT = Number(process.env.PORT || 5001);
 const DATABASE_URL = process.env.DATABASE_URL || '';
 if (!DATABASE_URL) throw new Error('DATABASE_URL must point to the isolated CIE Multi-Institute demo database.');
-const dbName = decodeURIComponent(new URL(DATABASE_URL).pathname.slice(1));
+const parsedDbUrl = new URL(DATABASE_URL);
+const dbName = decodeURIComponent(parsedDbUrl.pathname.slice(1));
 if (!['cie_multi_institute_demo_db', 'cie_test'].includes(dbName)) {
   throw new Error('Safety stop: School ERP is allowed only on cie_multi_institute_demo_db or disposable cie_test. Production database blocked.');
 }
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) throw new Error('JWT_SECRET must contain at least 32 characters.');
-const pool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 8, connectionTimeoutMillis: 7000 });
+const pool = new Pool({ connectionString: DATABASE_URL, ssl: ['localhost','127.0.0.1'].includes(parsedDbUrl.hostname) ? false : { rejectUnauthorized: false }, max: 8, connectionTimeoutMillis: 7000 });
 const asyncRoute = fn => (req,res,next) => Promise.resolve(fn(req,res,next)).catch(next);
 const clean = v => String(v ?? '').trim();
 const emailOk = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(v));

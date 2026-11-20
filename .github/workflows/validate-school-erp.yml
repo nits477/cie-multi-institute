@@ -1,0 +1,54 @@
+name: Validate School ERP
+on:
+  push:
+    branches: [work/school-erp-platform]
+  pull_request:
+    branches: [work/school-erp-platform]
+concurrency:
+  group: school-erp-validation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  school-erp-check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cie_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cie_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/cie_test
+      JWT_SECRET: test-only-school-erp-jwt-secret-123456789012345
+      BOOTSTRAP_SECRET: test-only-bootstrap-secret
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+        working-directory: school-erp
+      - run: npm run check
+        working-directory: school-erp
+      - name: Start service and apply isolated migrations
+        run: |
+          node server.js > /tmp/school-erp.log 2>&1 &
+          echo $! > /tmp/school-erp.pid
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:5001/api/health >/dev/null; then
+              echo "School ERP API and PostgreSQL migration are healthy."
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/school-erp.log
+          exit 1
+        working-directory: school-erp

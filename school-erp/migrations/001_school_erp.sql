@@ -110,3 +110,4 @@ CREATE TABLE IF NOT EXISTS school_erp_audit_logs (
 );
 CREATE INDEX IF NOT EXISTS school_erp_audit_school_date_idx
   ON school_erp_audit_logs(school_id, created_at DESC);
+COMMIT;

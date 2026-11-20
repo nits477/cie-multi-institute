@@ -54,3 +54,8 @@ jobs:
           cat /tmp/school-erp.log
           exit 1
         working-directory: school-erp
+      - name: Verify school tenant isolation and module controls
+        run: node scripts/test-tenant-isolation.js
+        working-directory: school-erp
+        env:
+          BASE_URL: http://127.0.0.1:5001

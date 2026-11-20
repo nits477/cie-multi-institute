@@ -54,6 +54,13 @@ const requireSchool = asyncRoute(async(req,res,next) => {
   if (!r.rowCount || r.rows[0].status !== 'active') return res.status(403).json({ message: 'School account is inactive.' });
   next();
 });
+function requireModule(moduleKey) {
+  return asyncRoute(async(req,res,next) => {
+    const r = await pool.query('SELECT enabled FROM school_erp_modules WHERE school_id=$1 AND module_key=$2', [req.user.schoolId,moduleKey]);
+    if (!r.rowCount || !r.rows[0].enabled) return res.status(403).json({ message:'This module is disabled for your school.' });
+    next();
+  });
+}
 
 app.get('/api/health', asyncRoute(async(_req,res) => {
   await pool.query('SELECT 1');
@@ -74,10 +81,12 @@ app.post('/api/bootstrap/super-admin', asyncRoute(async(req,res) => {
 
 app.post('/api/auth/login', asyncRoute(async(req,res) => {
   const { email, password, role } = req.body || {};
+  const schoolCode = clean(req.body?.schoolCode).toUpperCase();
   if (!emailOk(email) || !password || !['super_admin','school_admin'].includes(role)) return res.status(400).json({ message:'Email, password and account type are required.' });
+  if (role === 'school_admin' && !/^[A-Z0-9-]{3,20}$/.test(schoolCode)) return res.status(400).json({ message:'School Code is required for School Admin login.' });
   const r = role === 'super_admin'
     ? await pool.query("SELECT id,school_id,full_name,email,password_hash,role,is_active FROM school_erp_users WHERE LOWER(email)=LOWER($1) AND role='super_admin'", [clean(email)])
-    : await pool.query("SELECT id,school_id,full_name,email,password_hash,role,is_active FROM school_erp_users WHERE LOWER(email)=LOWER($1) AND role='school_admin'", [clean(email)]);
+    : await pool.query("SELECT u.id,u.school_id,u.full_name,u.email,u.password_hash,u.role,u.is_active FROM school_erp_users u JOIN school_erp_schools s ON s.id=u.school_id WHERE LOWER(u.email)=LOWER($1) AND UPPER(s.school_code)=UPPER($2) AND u.role='school_admin'", [clean(email), schoolCode]);
   const u = r.rows[0];
   if (!u || !u.is_active || !(await bcrypt.compare(String(password), u.password_hash))) return res.status(401).json({ message:'Invalid login details or inactive account.' });
   if (u.school_id) {
@@ -122,6 +131,19 @@ app.patch('/api/super/schools/:id/status', auth('super_admin'), asyncRoute(async
   await audit(req.user,'school.status_changed','school',id,{status});
   res.json(r.rows[0]);
 }));
+app.patch('/api/super/schools/:id/modules', auth('super_admin'), asyncRoute(async(req,res) => {
+  const id=Number(req.params.id), key=clean(req.body.moduleKey), enabled=req.body.enabled;
+  if(!Number.isSafeInteger(id)||id<1||!modules.includes(key)||typeof enabled!=='boolean')return res.status(400).json({message:'Valid school, module and enabled flag are required.'});
+  const r=await pool.query('INSERT INTO school_erp_modules(school_id,module_key,enabled) VALUES($1,$2,$3) ON CONFLICT(school_id,module_key) DO UPDATE SET enabled=EXCLUDED.enabled RETURNING *',[id,key,enabled]);
+  await audit(req.user,'school.module_changed','school',id,{moduleKey:key,enabled});
+  res.json(r.rows[0]);
+}));
+app.patch('/api/super/schools/:id/domain', auth('super_admin'), asyncRoute(async(req,res) => {
+  const id=Number(req.params.id), domain=clean(req.body.customDomain);
+  if(!Number.isSafeInteger(id)||id<1||!domain||!/^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$/i.test(domain))return res.status(400).json({message:'A valid school domain is required.'});
+  try{const r=await pool.query('UPDATE school_erp_schools SET custom_domain=$1,updated_at=NOW() WHERE id=$2 RETURNING id,custom_domain',[domain.toLowerCase(),id]);if(!r.rowCount)return res.status(404).json({message:'School not found.'});await audit(req.user,'school.domain_changed','school',id,{domain:domain.toLowerCase()});res.json(r.rows[0]);}
+  catch(e){if(e.code==='23505')return res.status(409).json({message:'This domain is already assigned.'});throw e;}
+}));
 app.post('/api/super/schools/:id/admins', auth('super_admin'), asyncRoute(async(req,res) => {
   const schoolId=Number(req.params.id), b=req.body||{};
   if(!Number.isSafeInteger(schoolId)||schoolId<1||!clean(b.fullName)||!emailOk(b.email)||String(b.password||'').length<10) return res.status(400).json({message:'School, admin name, valid email and password (minimum 10 characters) are required.'});
@@ -146,11 +168,11 @@ app.get('/api/school/summary', auth('school_admin'), requireSchool, asyncRoute(a
   res.json({students:students.rows[0].n,feeTotal:fees.rows[0].n,feeReceipts:fees.rows[0].c,expenses:expenses.rows[0].n,income:income.rows[0].n});
 }));
 
-app.get('/api/school/admissions', auth('school_admin'), requireSchool, asyncRoute(async(req,res) => {
+app.get('/api/school/admissions', auth('school_admin'), requireSchool, requireModule('admissions'), asyncRoute(async(req,res) => {
   const r=await pool.query('SELECT id,admission_no,student_name,class_name,guardian_name,mobile,email,admission_date,status,created_at FROM school_erp_admissions WHERE school_id=$1 ORDER BY created_at DESC LIMIT 500',[req.user.schoolId]);
   res.json(r.rows);
 }));
-app.post('/api/school/admissions', auth('school_admin'), requireSchool, asyncRoute(async(req,res) => {
+app.post('/api/school/admissions', auth('school_admin'), requireSchool, requireModule('admissions'), asyncRoute(async(req,res) => {
   const b=req.body||{};
   if(!clean(b.studentName)||!clean(b.className))return res.status(400).json({message:'Student name and class are required.'});
   try {
@@ -160,10 +182,10 @@ app.post('/api/school/admissions', auth('school_admin'), requireSchool, asyncRou
   } catch(e){if(e.code==='23505')return res.status(409).json({message:'Admission number already exists in this school.'});throw e;}
 }));
 
-app.get('/api/school/fees', auth('school_admin'), requireSchool, asyncRoute(async(req,res) => {
+app.get('/api/school/fees', auth('school_admin'), requireSchool, requireModule('fees'), asyncRoute(async(req,res) => {
   const r=await pool.query('SELECT id,student_name,fee_head,amount,payment_mode,receipt_no,paid_on,created_at FROM school_erp_fee_receipts WHERE school_id=$1 ORDER BY paid_on DESC, id DESC LIMIT 500',[req.user.schoolId]);res.json(r.rows);
 }));
-app.post('/api/school/fees', auth('school_admin'), requireSchool, asyncRoute(async(req,res) => {
+app.post('/api/school/fees', auth('school_admin'), requireSchool, requireModule('fees'), asyncRoute(async(req,res) => {
   const b=req.body||{},amount=Number(b.amount),mode=clean(b.paymentMode).toLowerCase();
   if(!clean(b.studentName)||!clean(b.feeHead)||!Number.isFinite(amount)||amount<=0||!['cash','upi','bank','cheque','other'].includes(mode))return res.status(400).json({message:'Student, fee head, valid amount and payment mode are required.'});
   const r=await pool.query('INSERT INTO school_erp_fee_receipts(school_id,student_name,fee_head,amount,payment_mode,receipt_no,paid_on) VALUES($1,$2,$3,$4,$5,$6,COALESCE($7::date,CURRENT_DATE)) RETURNING *',[req.user.schoolId,clean(b.studentName),clean(b.feeHead),amount,mode,clean(b.receiptNo)||null,b.paidOn||null]);
@@ -171,10 +193,10 @@ app.post('/api/school/fees', auth('school_admin'), requireSchool, asyncRoute(asy
   res.status(201).json(r.rows[0]);
 }));
 
-app.get('/api/school/vouchers', auth('school_admin'), requireSchool, asyncRoute(async(req,res) => {
+app.get('/api/school/vouchers', auth('school_admin'), requireSchool, requireModule('vouchers'), asyncRoute(async(req,res) => {
   const r=await pool.query('SELECT id,title,paid_to,amount,voucher_date,created_at FROM school_erp_vouchers WHERE school_id=$1 ORDER BY voucher_date DESC,id DESC LIMIT 500',[req.user.schoolId]);res.json(r.rows);
 }));
-app.post('/api/school/vouchers', auth('school_admin'), requireSchool, asyncRoute(async(req,res) => {
+app.post('/api/school/vouchers', auth('school_admin'), requireSchool, requireModule('vouchers'), asyncRoute(async(req,res) => {
   const b=req.body||{},amount=Number(b.amount);
   if(!clean(b.title)||!Number.isFinite(amount)||amount<=0)return res.status(400).json({message:'Voucher title and positive amount are required.'});
   const r=await pool.query('INSERT INTO school_erp_vouchers(school_id,title,paid_to,amount,voucher_date) VALUES($1,$2,$3,$4,COALESCE($5::date,CURRENT_DATE)) RETURNING *',[req.user.schoolId,clean(b.title),clean(b.paidTo)||null,amount,b.date||null]);
@@ -182,10 +204,10 @@ app.post('/api/school/vouchers', auth('school_admin'), requireSchool, asyncRoute
   res.status(201).json(r.rows[0]);
 }));
 
-app.get('/api/school/daybook', auth('school_admin'), requireSchool, asyncRoute(async(req,res) => {
+app.get('/api/school/daybook', auth('school_admin'), requireSchool, requireModule('daybook'), asyncRoute(async(req,res) => {
   const r=await pool.query('SELECT id,description,entry_type,amount,entry_date,created_at FROM school_erp_daybook WHERE school_id=$1 ORDER BY entry_date DESC,id DESC LIMIT 500',[req.user.schoolId]);res.json(r.rows);
 }));
-app.post('/api/school/daybook', auth('school_admin'), requireSchool, asyncRoute(async(req,res) => {
+app.post('/api/school/daybook', auth('school_admin'), requireSchool, requireModule('daybook'), asyncRoute(async(req,res) => {
   const b=req.body||{},amount=Number(b.amount),type=clean(b.entryType).toLowerCase();
   if(!clean(b.description)||!Number.isFinite(amount)||amount<=0||!['income','expense'].includes(type))return res.status(400).json({message:'Description, entry type and positive amount are required.'});
   const r=await pool.query('INSERT INTO school_erp_daybook(school_id,description,entry_type,amount,entry_date) VALUES($1,$2,$3,$4,COALESCE($5::date,CURRENT_DATE)) RETURNING *',[req.user.schoolId,clean(b.description),type,amount,b.date||null]);

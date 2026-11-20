@@ -35,16 +35,21 @@ async function migrate() {
 }
 const sign = user => jwt.sign({ sub: String(user.id), role: user.role, schoolId: user.school_id || null }, process.env.JWT_SECRET, { expiresIn: '12h', issuer: 'cie-school-erp' });
 function auth(...roles) {
-  return (req,res,next) => {
+  return asyncRoute(async(req,res,next) => {
+    let p;
     try {
       const h = req.headers.authorization || '';
       if (!h.startsWith('Bearer ')) return res.status(401).json({ message: 'Login required.' });
-      const p = jwt.verify(h.slice(7), process.env.JWT_SECRET, { issuer: 'cie-school-erp' });
-      if (roles.length && !roles.includes(p.role)) return res.status(403).json({ message: 'Access denied.' });
-      req.user = { id: Number(p.sub), role: p.role, schoolId: p.schoolId ? Number(p.schoolId) : null };
-      next();
+      p = jwt.verify(h.slice(7), process.env.JWT_SECRET, { issuer: 'cie-school-erp' });
     } catch { return res.status(401).json({ message: 'Session expired. Please login again.' }); }
-  };
+    if (roles.length && !roles.includes(p.role)) return res.status(403).json({ message: 'Access denied.' });
+    const id=Number(p.sub);
+    if(!Number.isSafeInteger(id)||id<1)return res.status(401).json({message:'Invalid session.'});
+    const active=await pool.query('SELECT is_active FROM school_erp_users WHERE id=$1 AND role=$2',[id,p.role]);
+    if(!active.rowCount||!active.rows[0].is_active)return res.status(401).json({message:'Account inactive. Please contact the Super Admin.'});
+    req.user = { id, role: p.role, schoolId: p.schoolId ? Number(p.schoolId) : null };
+    next();
+  });
 }
 async function audit(user, action, entityType, entityId, details={}) {
   await pool.query('INSERT INTO school_erp_audit_logs(school_id,actor_user_id,action,entity_type,entity_id,details) VALUES($1,$2,$3,$4,$5,$6)', [user.schoolId, user.id, action, entityType, entityId || null, JSON.stringify(details)]);
